@@ -17,6 +17,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 - Uploads handling no longer uses a public `/uploads` static directory.
 - Attachment deletion is now scoped to the parent item resource.
+- Shared notes are now managed per inventory item from the create/edit article dialogs (viewer read-only; editor/admin can manage).
 
 ### Fixed
 - Prevent cross-item attachment deletion by ensuring `attachmentId` belongs to `:id`.
