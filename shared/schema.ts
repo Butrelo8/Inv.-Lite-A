@@ -78,6 +78,7 @@ export const sharedNotes = pgTable("shared_notes", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),
   content: text("content").notNull(),
+  itemId: integer("item_id").notNull().references(() => inventoryItems.id, { onDelete: "cascade" }),
   authorId: integer("author_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   // Nullable by design: updates are set explicitly in the API.

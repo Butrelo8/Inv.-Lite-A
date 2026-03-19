@@ -247,22 +247,27 @@ export async function registerRoutes(
   });
 
   // Shared notes: viewers can read, editors/admin can write.
-  app.get("/api/shared-notes", requireAuth, async (_req, res) => {
-    const notes = await storage.getSharedNotes();
+  app.get("/api/shared-notes", requireAuth, async (req, res) => {
+    const rawItemId = req.query.itemId;
+    const itemId = rawItemId != null && rawItemId !== "" ? Number(rawItemId) : undefined;
+    const notes = await storage.getSharedNotes(Number.isFinite(itemId) ? itemId : undefined);
     res.json(notes);
   });
 
   app.post("/api/shared-notes", requireAuth, requireRole("editor", "admin"), async (req, res) => {
-    const body = req.body as { title?: unknown; content?: unknown };
+    const body = req.body as { title?: unknown; content?: unknown; itemId?: unknown };
     const title = typeof body.title === "string" ? body.title.trim() : "";
     const content = typeof body.content === "string" ? body.content.trim() : "";
+    const rawItemId = body.itemId;
+    const itemId = rawItemId != null && rawItemId !== "" ? Number(rawItemId) : NaN;
     if (!title) return res.status(400).json({ message: "title is required" });
     if (!content) return res.status(400).json({ message: "content is required" });
+    if (!Number.isFinite(itemId)) return res.status(400).json({ message: "itemId is required" });
 
     const userId = (req.user as any)?.id;
     if (!Number.isFinite(userId)) return res.status(401).json({ message: "Not authenticated" });
 
-    const created = await storage.createSharedNote({ title, content, authorId: userId });
+    const created = await storage.createSharedNote({ title, content, authorId: userId, itemId });
     res.status(201).json(created);
   });
 

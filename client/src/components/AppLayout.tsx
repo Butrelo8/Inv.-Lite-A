@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useTheme } from "next-themes";
-import { History, Users, Building2, UserCog, Sun, Moon, LogOut, LayoutDashboard, Package, FileText } from "lucide-react";
+import { History, Users, Building2, UserCog, Sun, Moon, LogOut, LayoutDashboard, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
@@ -57,18 +57,6 @@ export function AppLayout({ children }: AppLayoutProps) {
             >
               <Package className="w-3.5 h-3.5 md:w-4 md:h-4" />
               Inventario
-            </Link>
-            <Link
-              href="/shared-notes"
-              className={cn(
-                "px-3 py-1.5 md:px-4 md:py-2 rounded-md text-xs md:text-sm font-medium transition-colors flex items-center gap-1.5 md:gap-2",
-                location === "/shared-notes"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground hover:bg-background/50"
-              )}
-            >
-              <FileText className="w-3.5 h-3.5 md:w-4 md:h-4" />
-              Notas compartidas
             </Link>
             {(user?.role ?? "viewer") !== "viewer" && (
             <Link

@@ -4,6 +4,7 @@ export interface SharedNote {
   id: number;
   title: string;
   content: string;
+  itemId: number;
   authorId: number | null;
   authorUsername: string | null;
   createdAt: string;
@@ -21,23 +22,29 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function useSharedNotes() {
+export function useSharedNotes(itemId?: number, options?: { enabled?: boolean }) {
   return useQuery({
-    queryKey: [API],
-    queryFn: () => fetchJson<SharedNote[]>(API),
-    enabled: true,
+    queryKey: [API, itemId],
+    queryFn: () => {
+      const url = itemId != null ? `${API}?itemId=${encodeURIComponent(String(itemId))}` : API;
+      return fetchJson<SharedNote[]>(url);
+    },
+    enabled: options?.enabled ?? true,
   });
 }
 
-export function useCreateSharedNote() {
+export function useCreateSharedNote(itemId?: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (payload: { title: string; content: string }) =>
-      fetchJson<SharedNote>(API, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }),
+      {
+        if (itemId == null) throw new Error("Missing itemId for shared note creation");
+        return fetchJson<SharedNote>(API, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, itemId }),
+        });
+      },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [API] });
     },

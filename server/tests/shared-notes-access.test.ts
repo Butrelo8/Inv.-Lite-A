@@ -8,7 +8,7 @@ import { ensureThumbsDir } from "../thumbnails";
 
 type RoleMode = { auth: "unauth" } | { auth: "viewer" | "editor" | "admin" };
 
-async function ensureSharedNotesSchema() {
+async function ensureSharedNotesSchema(): Promise<number> {
   const url =
     process.env.DATABASE_URL ||
     "postgresql://inventario:inventario@127.0.0.1:5432/inventario";
@@ -32,10 +32,30 @@ async function ensureSharedNotesSchema() {
         id SERIAL PRIMARY KEY,
         title TEXT NOT NULL,
         content TEXT NOT NULL,
+        item_id INTEGER,
         author_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP
       );
+    `);
+
+    await pool.query(`
+      ALTER TABLE shared_notes
+        ADD COLUMN IF NOT EXISTS item_id INTEGER;
+    `);
+
+    // Ensure per-item linkage exists (important if the shared_notes table predates this feature).
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'shared_notes_item_id_fkey'
+        ) THEN
+          ALTER TABLE shared_notes
+            ADD CONSTRAINT shared_notes_item_id_fkey
+            FOREIGN KEY (item_id) REFERENCES inventory_items(id) ON DELETE CASCADE;
+        END IF;
+      END $$;
     `);
 
     await pool.query(`
@@ -44,13 +64,27 @@ async function ensureSharedNotesSchema() {
       ON CONFLICT (id) DO NOTHING;
     `);
 
+    // Create a real inventory item so editor POST can reference a valid item_id.
+    const code = `SN-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const itemResult = await pool.query(
+      `
+      INSERT INTO inventory_items (code, name, units, category)
+      VALUES ($1, 'Shared Notes Test Item', 1, 'Other')
+      RETURNING id;
+    `,
+      [code],
+    );
+    const itemId = itemResult.rows[0]?.id as number | undefined;
+    assert.equal(typeof itemId, "number");
+
     await pool.query(`TRUNCATE TABLE shared_notes RESTART IDENTITY;`);
+    return itemId;
   } finally {
     await pool.end();
   }
 }
 
-async function startTestServer(roleMode: RoleMode): Promise<{ baseUrl: string; httpServer: HttpServer }> {
+async function startTestServer(roleMode: RoleMode): Promise<{ baseUrl: string; httpServer: HttpServer; itemId: number }> {
   const app = express();
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
@@ -78,7 +112,7 @@ async function startTestServer(roleMode: RoleMode): Promise<{ baseUrl: string; h
   }
   process.env.NODE_ENV = process.env.NODE_ENV || "test";
 
-  await ensureSharedNotesSchema();
+  const itemId = await ensureSharedNotesSchema();
   const { registerRoutes } = await import("../routes");
   await registerRoutes(httpServer, app);
 
@@ -91,7 +125,7 @@ async function startTestServer(roleMode: RoleMode): Promise<{ baseUrl: string; h
   const addr = httpServer.address();
   assert(addr && typeof addr === "object", "Expected server address");
   const port = (addr as any).port as number;
-  return { baseUrl: `http://127.0.0.1:${port}`, httpServer };
+  return { baseUrl: `http://127.0.0.1:${port}`, httpServer, itemId };
 }
 
 const CSRF_HEADERS = {
@@ -124,12 +158,12 @@ test("shared-notes: viewer POST returns 403", async () => {
 });
 
 test("shared-notes: editor POST returns 201", async () => {
-  const { baseUrl, httpServer } = await startTestServer({ auth: "editor" });
+  const { baseUrl, httpServer, itemId } = await startTestServer({ auth: "editor" });
   try {
     const resp = await fetch(`${baseUrl}/api/shared-notes`, {
       method: "POST",
       headers: CSRF_HEADERS,
-      body: JSON.stringify({ title: "t1", content: "c1" }),
+      body: JSON.stringify({ title: "t1", content: "c1", itemId }),
     });
     assert.equal(resp.status, 201);
   } finally {

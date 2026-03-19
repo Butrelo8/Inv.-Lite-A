@@ -1,11 +1,10 @@
 import { useState } from "react";
 import { format } from "date-fns";
-import { FileText, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { FileText, Loader2, Pencil, Trash2 } from "lucide-react";
 
 import { useAuth } from "@/hooks/use-auth";
 import {
   useSharedNotes,
-  useCreateSharedNote,
   useUpdateSharedNote,
   useDeleteSharedNote,
   type SharedNote,
@@ -41,7 +40,6 @@ export default function SharedNotes() {
   const canEdit = (user?.role ?? "viewer") === "editor" || (user?.role ?? "viewer") === "admin";
 
   const { data: notes = [], isLoading } = useSharedNotes();
-  const createMutation = useCreateSharedNote();
   const updateMutation = useUpdateSharedNote();
   const deleteMutation = useDeleteSharedNote();
   const { toast } = useToast();
@@ -51,14 +49,6 @@ export default function SharedNotes() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [deleting, setDeleting] = useState<SharedNote | null>(null);
-
-  const openAdd = () => {
-    if (!canEdit) return;
-    setEditing(null);
-    setTitle("");
-    setContent("");
-    setFormOpen(true);
-  };
 
   const openEdit = (n: SharedNote) => {
     if (!canEdit) return;
@@ -74,31 +64,18 @@ export default function SharedNotes() {
     const trimmedContent = content.trim();
     if (!trimmedTitle || !trimmedContent) return;
 
-    if (editing) {
-      updateMutation.mutate(
-        { id: editing.id, title: trimmedTitle, content: trimmedContent },
-        {
-          onSuccess: () => {
-            toast({ title: "Nota compartida actualizada" });
-            setFormOpen(false);
-          },
-          onError: (err: any) =>
-            toast({ variant: "destructive", title: "Error", description: err?.message || "No se pudo actualizar" }),
+    if (!editing) return;
+    updateMutation.mutate(
+      { id: editing.id, title: trimmedTitle, content: trimmedContent },
+      {
+        onSuccess: () => {
+          toast({ title: "Nota compartida actualizada" });
+          setFormOpen(false);
         },
-      );
-    } else {
-      createMutation.mutate(
-        { title: trimmedTitle, content: trimmedContent },
-        {
-          onSuccess: () => {
-            toast({ title: "Nota compartida creada" });
-            setFormOpen(false);
-          },
-          onError: (err: any) =>
-            toast({ variant: "destructive", title: "Error", description: err?.message || "No se pudo crear" }),
-        },
-      );
-    }
+        onError: (err: any) =>
+          toast({ variant: "destructive", title: "Error", description: err?.message || "No se pudo actualizar" }),
+      },
+    );
   };
 
   const doDelete = () => {
@@ -132,22 +109,15 @@ export default function SharedNotes() {
             Sección de notas compartidas
           </CardTitle>
           <CardDescription>
-            {notes.length} nota(s) compartida(s). {canEdit ? "Puedes crear, editar y eliminar." : "Solo puedes leer."}
+            {notes.length} nota(s) compartida(s). {canEdit ? "Puedes editar y eliminar." : "Solo puedes leer."}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {canEdit && (
-            <div className="flex justify-end">
-              <Button onClick={openAdd} className="gap-2">
-                <Plus className="w-4 h-4" />
-                Nueva nota
-              </Button>
-            </div>
-          )}
+          {/* La creación de notas se gestiona desde el formulario de artículos (por item). */}
 
           {notes.length === 0 ? (
             <p className="text-muted-foreground text-center py-8">
-              {canEdit ? "Aún no hay notas. Crea la primera." : "Aún no hay notas compartidas."}
+              "Aún no hay notas compartidas."
             </p>
           ) : (
             <div className="grid gap-3">
@@ -216,8 +186,8 @@ export default function SharedNotes() {
         >
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>{editing ? "Editar nota compartida" : "Nueva nota compartida"}</DialogTitle>
-              <DialogDescription>{editing ? "Actualiza el contenido y/o título." : "Crea una nota compartida para el equipo."}</DialogDescription>
+              <DialogTitle>Editar nota compartida</DialogTitle>
+              <DialogDescription>Actualiza el contenido y/o título.</DialogDescription>
             </DialogHeader>
 
             <form onSubmit={handleSubmit} className="space-y-4 pt-2">
@@ -249,15 +219,14 @@ export default function SharedNotes() {
                 <Button
                   type="submit"
                   disabled={
-                    createMutation.isPending ||
                     updateMutation.isPending ||
                     !title.trim() ||
                     !content.trim()
                   }
                   className="gap-2"
                 >
-                  {(createMutation.isPending || updateMutation.isPending) && <Loader2 className="w-4 h-4 animate-spin" />}
-                  {editing ? "Guardar" : "Crear"}
+                  {updateMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Guardar
                 </Button>
               </div>
             </form>

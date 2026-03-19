@@ -33,8 +33,8 @@ export interface IStorage {
   createCompany(name: string): Promise<{ id: number; name: string }>;
   updateCompany(id: number, name: string): Promise<{ id: number; name: string } | undefined>;
   deleteCompany(id: number): Promise<boolean>;
-  getSharedNotes(): Promise<SharedNoteWithAuthor[]>;
-  createSharedNote(record: { title: string; content: string; authorId: number }): Promise<SharedNoteWithAuthor>;
+  getSharedNotes(itemId?: number): Promise<SharedNoteWithAuthor[]>;
+  createSharedNote(record: { title: string; content: string; authorId: number; itemId: number }): Promise<SharedNoteWithAuthor>;
   updateSharedNote(id: number, updates: UpdateSharedNoteRequest): Promise<SharedNoteWithAuthor | undefined>;
   deleteSharedNote(id: number): Promise<SharedNoteWithAuthor | undefined>;
   getResponsibleWithCounts(): Promise<{ name: string; count: number }[]>;
@@ -178,26 +178,31 @@ export class DatabaseStorage implements IStorage {
     return !!row;
   }
 
-  async getSharedNotes(): Promise<SharedNoteWithAuthor[]> {
-    return await db
+  async getSharedNotes(itemId?: number): Promise<SharedNoteWithAuthor[]> {
+    const base = db
       .select({
         id: sharedNotes.id,
         title: sharedNotes.title,
         content: sharedNotes.content,
+        itemId: sharedNotes.itemId,
         authorId: sharedNotes.authorId,
         createdAt: sharedNotes.createdAt,
         updatedAt: sharedNotes.updatedAt,
         authorUsername: users.username,
       })
       .from(sharedNotes)
-      .leftJoin(users, eq(sharedNotes.authorId, users.id))
-      .orderBy(desc(sharedNotes.createdAt));
+      .leftJoin(users, eq(sharedNotes.authorId, users.id));
+
+    if (itemId != null) {
+      return await base.where(eq(sharedNotes.itemId, itemId)).orderBy(desc(sharedNotes.createdAt));
+    }
+    return await base.orderBy(desc(sharedNotes.createdAt));
   }
 
-  async createSharedNote(record: { title: string; content: string; authorId: number }): Promise<SharedNoteWithAuthor> {
+  async createSharedNote(record: { title: string; content: string; authorId: number; itemId: number }): Promise<SharedNoteWithAuthor> {
     const [row] = await db
       .insert(sharedNotes)
-      .values({ title: record.title, content: record.content, authorId: record.authorId })
+      .values({ title: record.title, content: record.content, authorId: record.authorId, itemId: record.itemId })
       .returning();
     if (!row) throw new Error("Failed to insert shared note");
 

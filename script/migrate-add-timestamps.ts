@@ -27,10 +27,26 @@ async function main() {
         id SERIAL PRIMARY KEY,
         title TEXT NOT NULL,
         content TEXT NOT NULL,
+        item_id INTEGER REFERENCES inventory_items(id) ON DELETE CASCADE,
         author_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP
       );
+    `);
+
+    // Ensure per-item linkage exists even if shared_notes was created earlier without item_id.
+    await pool.query(`
+      ALTER TABLE shared_notes ADD COLUMN IF NOT EXISTS item_id INTEGER;
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'shared_notes_item_id_fkey'
+        ) THEN
+          ALTER TABLE shared_notes
+            ADD CONSTRAINT shared_notes_item_id_fkey
+            FOREIGN KEY (item_id) REFERENCES inventory_items(id) ON DELETE CASCADE;
+        END IF;
+      END $$;
     `);
 
     console.log("Migration done: inventory_items timestamps + shared_notes table.");
