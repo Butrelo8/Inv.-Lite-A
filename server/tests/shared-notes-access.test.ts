@@ -78,7 +78,7 @@ async function ensureSharedNotesSchema(): Promise<number> {
     assert.equal(typeof itemId, "number");
 
     await pool.query(`TRUNCATE TABLE shared_notes RESTART IDENTITY;`);
-    return itemId;
+    return itemId as number;
   } finally {
     await pool.end();
   }
