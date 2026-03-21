@@ -1,3 +1,5 @@
+import { conditionToDisplay } from "@/lib/category-translate";
+
 interface StatusBadgeProps {
   status: string;
 }
@@ -24,7 +26,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
 
   return (
     <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${colorClass}`}>
-      {status || "Unknown"}
+      {conditionToDisplay(status)}
     </span>
   );
 }

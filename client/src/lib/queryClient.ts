@@ -7,6 +7,18 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
+async function handleSessionExpired(url: string, res: Response): Promise<void> {
+  if (res.status !== 401 || !url.includes("/api")) return;
+  const data = await res.clone().json().catch(() => null);
+  if (data?.message !== "Sesión expirada") return;
+  queryClient.setQueryData(["/api/auth/me"], null);
+  if (typeof window !== "undefined") {
+    if (window.location.pathname !== "/login" || !window.location.search.includes("expired=1")) {
+      window.location.href = "/login?expired=1";
+    }
+  }
+}
+
 export async function apiRequest(
   method: string,
   url: string,
@@ -19,6 +31,7 @@ export async function apiRequest(
     credentials: "include",
   });
 
+  await handleSessionExpired(url, res);
   await throwIfResNotOk(res);
   return res;
 }
@@ -29,7 +42,8 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
+    const url = queryKey.join("/") as string;
+    const res = await fetch(url, {
       credentials: "include",
     });
 
@@ -37,6 +51,7 @@ export const getQueryFn: <T>(options: {
       return null;
     }
 
+    await handleSessionExpired(url, res);
     await throwIfResNotOk(res);
     return await res.json();
   };

@@ -9,15 +9,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Backup / restore runbook:** `docs/BACKUP-RESTORE.md` (archive layout, `pg_restore` vs SQL, uploads).
+- **Operations Health Dashboard:** `ops_events` table (see `migrations/add-ops-events.sql`), KPI/event taxonomy (`shared/ops-health.ts`), server instrumentation for auth, API 4xx/5xx and slow requests, import/history/thumbnail and backup script outcomes, APIs `GET /api/ops-health/summary` and `GET /api/ops-health/events` (editor/admin), and client page `/ops-health`.
 - Private uploads serving (auth-gated endpoints) for inventory images and employee documents.
 - Role-based access for employee documents (`editor/admin`).
 - Auth-gated thumbnail serving with on-demand generation.
 - Shared notes section with role-based access (`viewer` read-only, `editor/admin` manage).
 
 ### Changed
+- `npm run backup` defaults `BACKUP_DIR` to `<repository>/backups` and reads `uploads/` from the repo root (not the shell cwd); optional `BACKUP_DIR` is resolved relative to the repo when not absolute.
+- **Backup (Docker on Windows):** `pg_dump` no longer streams to stdout (empty output on Docker Desktop); dumps to a temp file in the container and `docker cp`s it out. `PGPASSWORD` is passed without embedding in `-e`. Ops events insert skips missing `ops_events` table (`42P01`).
 - Uploads handling no longer uses a public `/uploads` static directory.
 - Attachment deletion is now scoped to the parent item resource.
 - Shared notes are now managed per inventory item from the create/edit article dialogs (viewer read-only; editor/admin can manage).
+- Major: Viewers can now open a read-only item view from the inventory overview to see the item description/notes (within role limitations).
 
 ### Fixed
 - Prevent cross-item attachment deletion by ensuring `attachmentId` belongs to `:id`.

@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: inventario
+      POSTGRES_PASSWORD: inventario
+      POSTGRES_DB: inventario
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inventario -d inventario"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:5000:5000"
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      BIND_HOST: 0.0.0.0
+      TRUST_PROXY: "false"
+      DATABASE_URL: postgresql://inventario:inventario@postgres:5432/inventario
+      # Replace this value with a strong random string.
+      SESSION_SECRET: "CHANGE-ME-generate-random-32plus-chars"
+      COOKIE_SECURE: "false"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  uploads_data:

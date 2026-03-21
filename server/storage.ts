@@ -15,8 +15,11 @@ import {
   type User,
   type UpdateSharedNoteRequest,
   type EmployeeDocument,
+  opsEvents,
 } from "@shared/schema";
-import { eq, ilike, or, desc, and, gte, lte, isNull, count, inArray } from "drizzle-orm";
+import type { OpsEventSeverity, OpsEventType, OpsSummaryResponse } from "@shared/ops-health";
+import { eq, ilike, or, desc, and, gte, lte, isNull, count, inArray, sql, gt } from "drizzle-orm";
+import { pool } from "./db";
 import { suggestCode } from "./code-generator";
 
 type SharedNoteWithAuthor = SharedNote & { authorUsername: string | null };
@@ -65,6 +68,20 @@ export interface IStorage {
   addEmployeeDocument(record: { responsible?: string | null; itemId?: number | null; fileUrl: string; originalName: string; mimeType?: string | null; documentType?: string | null; expiresAt?: string | null; userId?: number | null }): Promise<EmployeeDocument>;
   deleteEmployeeDocument(id: number): Promise<{ fileUrl: string } | undefined>;
   updateEmployeeDocument(id: number, updates: { itemId?: number | null; documentType?: string | null; expiresAt?: string | null }): Promise<EmployeeDocument | undefined>;
+  addOpsEvent(record: {
+    eventType: OpsEventType;
+    severity: OpsEventSeverity;
+    source: string;
+    environment: string;
+    payload?: Record<string, unknown>;
+    userId?: number | null;
+    ip?: string | null;
+    requestId?: string | null;
+    endpoint?: string | null;
+    method?: string | null;
+  }): Promise<void>;
+  getOpsEventFeed(limit?: number, severity?: OpsEventSeverity): Promise<(typeof opsEvents.$inferSelect)[]>;
+  getOpsSummary(): Promise<OpsSummaryResponse>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -481,6 +498,179 @@ export class DatabaseStorage implements IStorage {
       .where(eq(employeeDocuments.id, id))
       .returning();
     return row;
+  }
+
+  async addOpsEvent(record: {
+    eventType: OpsEventType;
+    severity: OpsEventSeverity;
+    source: string;
+    environment: string;
+    payload?: Record<string, unknown>;
+    userId?: number | null;
+    ip?: string | null;
+    requestId?: string | null;
+    endpoint?: string | null;
+    method?: string | null;
+  }): Promise<void> {
+    await db.insert(opsEvents).values({
+      eventType: record.eventType,
+      severity: record.severity,
+      source: record.source,
+      environment: record.environment,
+      payload: record.payload ?? {},
+      userId: record.userId ?? null,
+      ip: record.ip ?? null,
+      requestId: record.requestId ?? null,
+      endpoint: record.endpoint ?? null,
+      method: record.method ?? null,
+    });
+  }
+
+  async getOpsEventFeed(limit = 100, severity?: OpsEventSeverity): Promise<(typeof opsEvents.$inferSelect)[]> {
+    const q = db
+      .select()
+      .from(opsEvents)
+      .orderBy(desc(opsEvents.createdAt))
+      .limit(Math.max(1, Math.min(limit, 500)));
+    if (severity) return q.where(eq(opsEvents.severity, severity));
+    return q;
+  }
+
+  async getOpsSummary(): Promise<OpsSummaryResponse> {
+    const now = new Date();
+    const last5m = new Date(now.getTime() - 5 * 60_000);
+    const last1h = new Date(now.getTime() - 60 * 60_000);
+    const last24h = new Date(now.getTime() - 24 * 60 * 60_000);
+    const last7d = new Date(now.getTime() - 7 * 24 * 60 * 60_000);
+
+    const [alertsRows, apiRows24h, authFailures24hRows, rateHits24hRows, csrf24hRows, importRows24h, backupRows7d, historyFailRows24h] = await Promise.all([
+      db
+        .select({
+          severity: opsEvents.severity,
+          total: count(),
+        })
+        .from(opsEvents)
+        .where(gt(opsEvents.createdAt, last24h))
+        .groupBy(opsEvents.severity),
+      db
+        .select({
+          eventType: opsEvents.eventType,
+          total: count(),
+          p95: sql<number>`percentile_cont(0.95) within group (order by (( ${opsEvents.payload} ->> 'durationMs')::numeric ))`,
+        })
+        .from(opsEvents)
+        .where(
+          and(
+            gt(opsEvents.createdAt, last24h),
+            inArray(opsEvents.eventType, ["api.error_4xx", "api.error_5xx", "api.slow_request"])
+          )
+        )
+        .groupBy(opsEvents.eventType),
+      db
+        .select({ total: count() })
+        .from(opsEvents)
+        .where(and(gt(opsEvents.createdAt, last24h), eq(opsEvents.eventType, "auth.login_failure"))),
+      db
+        .select({ total: count() })
+        .from(opsEvents)
+        .where(and(gt(opsEvents.createdAt, last24h), eq(opsEvents.eventType, "auth.rate_limit_hit"))),
+      db
+        .select({ total: count() })
+        .from(opsEvents)
+        .where(and(gt(opsEvents.createdAt, last24h), eq(opsEvents.eventType, "auth.csrf_blocked"))),
+      db
+        .select({
+          eventType: opsEvents.eventType,
+          payload: opsEvents.payload,
+        })
+        .from(opsEvents)
+        .where(and(gt(opsEvents.createdAt, last24h), inArray(opsEvents.eventType, ["job.import_success", "job.import_failure"]))),
+      db
+        .select({ eventType: opsEvents.eventType, total: count() })
+        .from(opsEvents)
+        .where(and(gt(opsEvents.createdAt, last7d), inArray(opsEvents.eventType, ["job.backup_success", "job.backup_failure"])))
+        .groupBy(opsEvents.eventType),
+      db
+        .select({ total: count() })
+        .from(opsEvents)
+        .where(and(gt(opsEvents.createdAt, last24h), eq(opsEvents.eventType, "job.history_write_failure"))),
+    ]);
+
+    let activeSessions: number | null = null;
+    try {
+      const sessions = await pool.query("select count(*)::int as count from user_sessions where expire > now()");
+      activeSessions = Number(sessions.rows?.[0]?.count ?? 0);
+    } catch {
+      activeSessions = null;
+    }
+
+    const alerts = { critical: 0, warning: 0, info: 0 };
+    for (const row of alertsRows) {
+      if (row.severity === "critical") alerts.critical = Number(row.total ?? 0);
+      if (row.severity === "warning") alerts.warning = Number(row.total ?? 0);
+      if (row.severity === "info") alerts.info = Number(row.total ?? 0);
+    }
+
+    let total4xx = 0;
+    let total5xx = 0;
+    let p95ApiLatencyMs24h: number | null = null;
+    for (const row of apiRows24h) {
+      if (row.eventType === "api.error_4xx") total4xx = Number(row.total ?? 0);
+      if (row.eventType === "api.error_5xx") total5xx = Number(row.total ?? 0);
+      if (row.eventType === "api.slow_request" && row.p95 != null && Number.isFinite(Number(row.p95))) {
+        p95ApiLatencyMs24h = Number(row.p95);
+      }
+    }
+    const totalApiErrors24h = total4xx + total5xx;
+    const api5xxRate24h = totalApiErrors24h > 0 ? total5xx / totalApiErrors24h : 0;
+    const apiSuccessRate24h = Math.max(0, 1 - api5xxRate24h);
+
+    const authFailures24h = Number(authFailures24hRows?.[0]?.total ?? 0);
+    const authFailureRatePerHour = authFailures24h / 24;
+    const rateLimitHits24h = Number(rateHits24hRows?.[0]?.total ?? 0);
+    const csrfBlocks24h = Number(csrf24hRows?.[0]?.total ?? 0);
+
+    const backupSuccess7d = Number(backupRows7d.find((r) => r.eventType === "job.backup_success")?.total ?? 0);
+    const backupFailure7d = Number(backupRows7d.find((r) => r.eventType === "job.backup_failure")?.total ?? 0);
+    const backupTotal7d = backupSuccess7d + backupFailure7d;
+    const backupSuccessRate7d = backupTotal7d > 0 ? backupSuccess7d / backupTotal7d : null;
+
+    const historyWriteFailures24h = Number(historyFailRows24h?.[0]?.total ?? 0);
+    const historyWritesApprox24h = Math.max(1, historyWriteFailures24h);
+    const historyWriteSuccessRate24h = Math.max(0, (historyWritesApprox24h - historyWriteFailures24h) / historyWritesApprox24h);
+
+    const importSuccesses = importRows24h.filter((r) => r.eventType === "job.import_success");
+    const importFailures = importRows24h.filter((r) => r.eventType === "job.import_failure").length;
+    const importRuns = importSuccesses.length + importFailures;
+    const totalRowsImported = importSuccesses.reduce((sum, row) => {
+      const payload = (row.payload ?? {}) as Record<string, unknown>;
+      const n = Number(payload.rowCount ?? 0);
+      return sum + (Number.isFinite(n) ? n : 0);
+    }, 0);
+    const importRowsPerRun24h = importSuccesses.length > 0 ? totalRowsImported / importSuccesses.length : null;
+    const importFailureRate24h = importRuns > 0 ? importFailures / importRuns : 0;
+
+    return {
+      windows: {
+        last5m: last5m.toISOString(),
+        last1h: last1h.toISOString(),
+        last24h: last24h.toISOString(),
+      },
+      kpis: {
+        apiSuccessRate24h,
+        api5xxRate24h,
+        authFailureRatePerHour,
+        rateLimitHits24h,
+        csrfBlocks24h,
+        backupSuccessRate7d,
+        historyWriteSuccessRate24h,
+        p95ApiLatencyMs24h,
+        activeSessions,
+        importRowsPerRun24h,
+        importFailureRate24h,
+      },
+      alerts,
+    };
   }
 }
 

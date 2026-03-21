@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: inventario
+      POSTGRES_PASSWORD: inventario
+      POSTGRES_DB: inventario
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inventario -d inventario"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:5000:5000"
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      BIND_HOST: 0.0.0.0
+      TRUST_PROXY: "false"
+      DATABASE_URL: postgresql://inventario:inventario@postgres:5432/inventario
+      # Set SESSION_SECRET securely (do not commit real secrets).
+      SESSION_SECRET: "${SESSION_SECRET:-please-set-session-secret}"
+      # Cookie must be non-secure over http://localhost or the browser won't send it; API then returns 401 and UI shows 0 items.
+      COOKIE_SECURE: "false"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  uploads_data:

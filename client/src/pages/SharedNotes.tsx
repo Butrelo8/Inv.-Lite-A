@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { format } from "date-fns";
 import { FileText, Loader2, Pencil, Trash2 } from "lucide-react";
+import { Redirect } from "wouter";
 
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -36,13 +37,24 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export default function SharedNotes() {
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const canEdit = (user?.role ?? "viewer") === "editor" || (user?.role ?? "viewer") === "admin";
-
-  const { data: notes = [], isLoading } = useSharedNotes();
+  const { data: notes = [], isLoading } = useSharedNotes(undefined, { enabled: !authLoading && canEdit });
   const updateMutation = useUpdateSharedNote();
   const deleteMutation = useDeleteSharedNote();
   const { toast } = useToast();
+
+  // Avoid redirecting before auth finishes loading.
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // Viewer should never see this feature surface.
+  if (!canEdit) return <Redirect to="/" />;
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<SharedNote | null>(null);

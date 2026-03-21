@@ -38,6 +38,13 @@
   --ring: 221 83% 53%;
   
   --radius: 0.75rem;
+
+  /* Chart colors */
+  --chart-1: 221 83% 53%;
+  --chart-2: 160 60% 45%;
+  --chart-3: 30 80% 55%;
+  --chart-4: 280 65% 60%;
+  --chart-5: 340 75% 55%;
 }
 
 .dark {
@@ -67,10 +74,16 @@
   
   --border: 217 33% 17%;
   --input: 217 33% 17%;
-  --ring: 224 76% 48%;
+  /* Brighter ring in dark mode for clearer focus visibility */
+  --ring: 217 91% 60%;
 }
 
 @layer base {
+  /* Ensures portaled content (Select, Dialog, etc.) stacks correctly on mobile and desktop */
+  #root {
+    position: relative;
+    z-index: 0;
+  }
   * {
     @apply border-border;
   }
@@ -81,6 +94,11 @@
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-display);
     @apply font-bold tracking-tight;
+  }
+  /* Visible focus for keyboard navigation (Tab key) - fallback for elements without component focus styles */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
   }
 }
 

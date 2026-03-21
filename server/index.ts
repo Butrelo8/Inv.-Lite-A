@@ -1,9 +1,23 @@
+import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
+import path from "path";
+import fs from "fs";
+import { configureAuth } from "./auth";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { ensureThumbsDir } from "./thumbnails";
+import { emitOpsEvent } from "./ops-events";
 
 const app = express();
+const SLOW_REQUEST_MS = parseInt(process.env.OPS_SLOW_REQUEST_MS || "1000", 10);
+
+// Ensure uploads and thumbnails directories exist and serve static files
+const uploadsPath = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(uploadsPath)) {
+  fs.mkdirSync(uploadsPath, { recursive: true });
+}
+ensureThumbsDir();
 const httpServer = createServer(app);
 
 declare module "http" {
@@ -21,6 +35,12 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+if (process.env.TRUST_PROXY === "true") {
+  app.set("trust proxy", 1);
+}
+
+configureAuth(app);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -48,11 +68,47 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
+      const shouldLogBody = res.statusCode >= 400 && res.statusCode <= 599;
+      if (shouldLogBody && capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
 
       log(logLine);
+
+      const userId = Number.isFinite((req as any).user?.id) ? (req as any).user.id : null;
+      const ip = (req.ip || "unknown").toString();
+      if (res.statusCode >= 400 && res.statusCode < 500) {
+        void emitOpsEvent({
+          eventType: "api.error_4xx",
+          severity: "warning",
+          endpoint: path,
+          method: req.method,
+          userId,
+          ip,
+          payload: { status: res.statusCode, durationMs: duration },
+        });
+      } else if (res.statusCode >= 500) {
+        void emitOpsEvent({
+          eventType: "api.error_5xx",
+          severity: "critical",
+          endpoint: path,
+          method: req.method,
+          userId,
+          ip,
+          payload: { status: res.statusCode, durationMs: duration },
+        });
+      }
+      if (duration > SLOW_REQUEST_MS) {
+        void emitOpsEvent({
+          eventType: "api.slow_request",
+          severity: "warning",
+          endpoint: path,
+          method: req.method,
+          userId,
+          ip,
+          payload: { durationMs: duration, thresholdMs: SLOW_REQUEST_MS, status: res.statusCode },
+        });
+      }
     }
   });
 
@@ -67,6 +123,15 @@ app.use((req, res, next) => {
     const message = err.message || "Internal Server Error";
 
     console.error("Internal Server Error:", err);
+    void emitOpsEvent({
+      eventType: "api.error_5xx",
+      severity: "critical",
+      endpoint: _req.path,
+      method: _req.method,
+      userId: Number.isFinite((_req as any).user?.id) ? (_req as any).user.id : null,
+      ip: (_req.ip || "unknown").toString(),
+      payload: { status, message },
+    });
 
     if (res.headersSent) {
       return next(err);
@@ -90,13 +155,38 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
+  const bindHost = process.env.BIND_HOST?.trim() || "127.0.0.1";
   httpServer.listen(
     {
       port,
-      host: "0.0.0.0",
+      host: bindHost,
     },
     () => {
-      log(`serving on port ${port}`);
+      log(`serving on ${bindHost}:${port}`);
+      void emitOpsEvent({
+        eventType: "system.startup",
+        severity: "info",
+        source: "server",
+        payload: { bindHost, port, nodeEnv: process.env.NODE_ENV || "development" },
+      });
     },
   );
 })();
+
+process.on("SIGINT", () => {
+  void emitOpsEvent({
+    eventType: "system.shutdown",
+    severity: "info",
+    source: "server",
+    payload: { reason: "SIGINT" },
+  }).finally(() => process.exit(0));
+});
+
+process.on("SIGTERM", () => {
+  void emitOpsEvent({
+    eventType: "system.shutdown",
+    severity: "info",
+    source: "server",
+    payload: { reason: "SIGTERM" },
+  }).finally(() => process.exit(0));
+});

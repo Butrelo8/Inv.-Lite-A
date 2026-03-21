@@ -1,111 +1,209 @@
-﻿# TODOS
+# TODOS
 
 Track open work and completed items by version. See `CHANGELOG.md` for full release notes.
 
 ---
 ## Open
 ---
-### Add "trusted enclosure" network exposure runbook (LAN-only verification)
-:**What:** Document a repeatable checklist to verify the app is reachable only from your intended local network / trusted devices (and not from the public internet), including port `5000` exposure, router/firewall forwarding, and any tunnel usage (e.g. Tailscale Funnel) limited to trusted identities.
-:**Why:** Your vision assumes a local enclosure with trusted people; without a network exposure check, â€œLAN-onlyâ€ can silently drift into â€œinternet-exposedâ€.
-:**Context:** The server binds to port `5000` (see `server/index.ts`) and the risk is primarily at the network boundary, not only at auth/role checks.
-:**Effort:** S
-:**Priority:** P0
-:**Depends on:** Confirming how you typically run the server (plain node vs docker vs reverse proxy) and whether any tunneling is allowed.
+### [Expansion] Add backup restore-verification job
+**What:** Implement automated restore verification (restore backup to temp DB, run integrity checks, publish pass/fail report).
+**Why:** “Backup exists” is insufficient; expansion requires proven recoverability and auditable resilience.
+**Context:** Backup tooling exists but restore confidence must be continuously verified.
+**Effort:** M
+**Priority:** P0
+**Depends on:** Access to isolated restore target and integrity-check scripts.
 
 ---
-### Add configurable local bind host (reduce accidental wide-area exposure)
-:**What:** Change the default from `host: "0.0.0.0"` to a safer default (e.g. `127.0.0.1` or a configurable `BIND_HOST`/`LOCAL_ONLY`), so the enclosure boundary is enforced by defaultâ€”not by discipline alone.
-:**Why:** Even if auth and uploads are correct, wide interface binding increases accidental exposure risk when a router/firewall/tunnel is misconfigured.
-:**Context:** `server/index.ts` currently listens on `host: "0.0.0.0"`.
-:**Effort:** M
-:**Priority:** P0
-:**Depends on:** Deciding your preferred local access mode (localhost only vs LAN interface).
+### [Expansion] Add data-integrity scanner + repair report
+**What:** Add scheduled integrity scans for orphaned files/attachments/history mismatches and generate a read-only repair report.
+**Why:** Prevents silent drift and preserves trust as data volume and team usage scale.
+**Context:** Recent FK/order fixes show integrity guardrails are now a growth-critical capability.
+**Effort:** M
+**Priority:** P0
+**Depends on:** Ops dashboard event pipeline for visibility.
 
 ---
-### Remove sensitive `/api` response-body logging in non-dev deployments
-**What:** Disable or strictly redact the `res.json()` body logging wrapper in `server/index.ts` so production logs do not include response JSON payloads (PII and internal notes).
-**Why:** Prevents accidental leakage of sensitive fields into logs (especially for inventory `notes`, user identity, and document metadata).
-**Context:** `server/index.ts` overrides `res.json` and logs `JSON.stringify(capturedJsonResponse)` for all `/api` responses.
+### [Expansion] Ship assignment and handover workflow
+**What:** Add explicit “assign asset” and “return asset” actions with required metadata (assignee/date/condition/notes) and normalized audit events.
+**Why:** Moves core usage from ad-hoc edits into structured workflows, increasing product stickiness.
+**Context:** Existing inventory edits are flexible; expansion requires governed lifecycle steps.
+**Effort:** L
+**Priority:** P1
+**Depends on:** Stable audit/event schema and role checks.
+
+---
+### [Expansion] Ship maintenance and calibration workflow
+**What:** Add recurring maintenance/calibration schedules, due/overdue states, and completion actions with evidence/notes.
+**Why:** Operational value shifts from static inventory tracking to lifecycle management.
+**Context:** Natural next module after assignment workflow for field/industrial use cases.
+**Effort:** L
+**Priority:** P1
+**Depends on:** Assignment workflow and notification/alerting hooks.
+
+---
+### [Expansion] Add compliance expiration action center
+**What:** Build due-soon/overdue/critical queues for employee documents with escalation rules by role.
+**Why:** Converts compliance risk from reactive to proactive, a key expansion differentiator.
+**Context:** Document tracking exists; this adds operational workflows and accountability.
+**Effort:** M
+**Priority:** P1
+**Depends on:** Alerting primitives and employee-document data completeness.
+
+---
+### [Expansion] Add guarded bulk operations + short undo window
+**What:** Implement safe bulk actions (archive/reassign/status update) with confirmation and short-lived undo support for destructive operations.
+**Why:** Improves team throughput while reducing operational mistakes in larger datasets.
+**Context:** Current flows optimize correctness per item; expansion needs safe scale operations.
+**Effort:** M
+**Priority:** P1
+**Depends on:** Consistent audit recording and reversible action model.
+
+---
+### [Expansion] Introduce site/location data model foundations
+**What:** Add site/location primitives and scope inventory/doc/workflow records to location context (feature-flagged rollout).
+**Why:** Enables multi-site expansion without disruptive schema rewrite later.
+**Context:** Current model is effectively single-site; this is a 6-12 month scalability prerequisite.
+**Effort:** L
+**Priority:** P2
+**Depends on:** Agreement on tenancy/scoping model and migration plan.
+
+---
+### [Expansion] Add scoped RBAC templates by site/business unit
+**What:** Add reusable role templates and enforce location-scoped permissions at API boundaries.
+**Why:** Reduces onboarding friction and avoids per-customer permission customization debt.
+**Context:** Role model exists globally; expansion requires scoped authorization patterns.
+**Effort:** L
+**Priority:** P2
+**Depends on:** Site/location model implementation.
+
+---
+### [Expansion] Add outbound webhook integration layer (v1)
+**What:** Add webhook events for core lifecycle changes (inventory CRUD, assignment events, compliance alerts) with retries and idempotency.
+**Why:** Integration readiness is required for expansion into larger teams and connected systems.
+**Context:** Enables ecosystem workflows without tight coupling to specific third-party systems.
+**Effort:** M
+**Priority:** P2
+**Depends on:** Stable event contracts and observability for delivery failures.
+
+---
+### [Expansion] Publish onboarding templates + executive summary report
+**What:** Ship vertical starter templates and an executive summary report (asset health, risk, compliance posture).
+**Why:** Improves time-to-value and supports go-to-market expansion beyond technical users.
+**Context:** Product foundation is maturing; packaging is required for repeatable onboarding.
+**Effort:** M
+**Priority:** P2
+**Depends on:** Workflow modules and site-scoped data model stability.
+
+## Completed
+---
+### Build Operations Health Dashboard (control tower) (2026-03-20)
+**What:** Internal Ops Health dashboard: `ops_events` storage, KPI/event taxonomy, server instrumentation (auth, API errors/slow requests, import/history/thumbnail, backup script), and `/ops-health` page (editor/admin) with summary + event feed.
+**Why:** Operators need one place to detect failures quickly and reduce mean time to detect incidents.
+**Context:** KPIs/severity defined; migration `migrations/add-ops-events.sql`; APIs `/api/ops-health/summary` and `/api/ops-health/events`.
+**Effort:** M
+**Priority:** P0
+**Depends on:** Defining operational KPIs and severity thresholds (done).
+**Completed:** 2026-03-20
+
+### Add "trusted enclosure" network exposure runbook (LAN-only verification) (v1.5 2026-03-20)
+**What:** Documented a repeatable checklist to verify the app is reachable only from trusted local network/devices and not publicly exposed.
+**Why:** Prevents silent drift from LAN-only to internet-exposed deployments.
+**Context:** Added runbook at `docs/LAN-SECURITY-RUNBOOK.md`.
 **Effort:** S
 **Priority:** P0
-**Depends on:** Defining what (if any) response details are safe to log (status-only vs allowlist).
+**Depends on:** Confirmed deployment mode and tunnel policy.
+**Completed:** v1.5 (2026-03-20)
 
----
-### Sandbox PDF preview iframe
-**What:** Add a `sandbox` attribute to the PDF `iframe` in `client/src/components/DocumentPreviewModal.tsx` (and keep navigation/download behavior intact).
-**Why:** Unsandboxed embedded documents widen the browser security surface if a user can upload or serve a crafted PDF.
-**Context:** `DocumentPreviewModal.tsx` renders `iframe` for `application/pdf` without `sandbox`.
+### Add configurable local bind host (reduce accidental wide-area exposure) (v1.5 2026-03-20)
+**What:** Changed server bind host to configurable `BIND_HOST` with safer default `127.0.0.1`.
+**Why:** Enforces safer local boundary by default.
+**Context:** Updated `server/index.ts`, `.env.example`, and `docker-compose.yml`.
+**Effort:** M
+**Priority:** P0
+**Depends on:** Preferred local access mode.
+**Completed:** v1.5 (2026-03-20)
+
+### Remove sensitive `/api` response-body logging in non-dev deployments (v1.5 2026-03-20)
+**What:** Kept API request status/timing logs but restricted response-body logging to error responses only.
+**Why:** Reduces risk of sensitive payload leakage into logs.
+**Context:** Updated logging middleware in `server/index.ts`.
+**Effort:** S
+**Priority:** P0
+**Depends on:** Safe production logging policy.
+**Completed:** v1.5 (2026-03-20)
+
+### Sandbox PDF preview iframe (v1.5 2026-03-20)
+**What:** Added `sandbox` to the PDF preview `iframe`.
+**Why:** Reduces browser attack surface for embedded PDF content.
+**Context:** Updated `client/src/components/DocumentPreviewModal.tsx`.
 **Effort:** S
 **Priority:** P1
 **Depends on:** None.
+**Completed:** v1.5 (2026-03-20)
 
----
-### Add brute-force / rate limiting to `POST /api/auth/login`
-**What:** Introduce rate limiting (and optionally temporary lockout) for `POST /api/auth/login` keyed by IP and username.
-**Why:** Repeated password attempts currently have no visible throttling/lockout; improves resilience.
-**Context:** `server/routes.ts` handles `/api/auth/login` via `passport.authenticate("local", ...)` without a limiter.
+### Add brute-force / rate limiting to `POST /api/auth/login` (v1.5 2026-03-20)
+**What:** Added PostgreSQL-backed login rate limiting keyed by IP and IP+username with `Retry-After`.
+**Why:** Improves resilience against repeated password attempts.
+**Context:** Added `server/rate-limiter.ts` and integrated it in `server/routes.ts`.
 **Effort:** M
 **Priority:** P1
-**Depends on:** Choosing limiter strategy (in-memory vs shared store) for your deployment mode.
+**Depends on:** Shared-store strategy.
+**Completed:** v1.5 (2026-03-20)
 
----
-### Use a persistent session store in non-dev local deployments
-**What:** Replace the `memorystore` session store configured in `server/auth.ts` with a persistent shared store for production (so restarts/multi-instances behave correctly).
-**Why:** In-memory sessions break consistency in multi-instance deployments and weaken operational guarantees.
-**Context:** `server/auth.ts` uses `MemoryStore(session)` for sessions.
+### Use a persistent session store in non-dev local deployments (v1.5 2026-03-20)
+**What:** Switched production sessions from in-memory store to `connect-pg-simple` (PostgreSQL).
+**Why:** Improves session consistency across restarts/instances.
+**Context:** Updated `server/auth.ts`.
 **Effort:** M
 **Priority:** P1
-**Depends on:** Deciding which shared store to use (you already have `connect-pg-simple` as a dependency).
+**Depends on:** Shared store selection.
+**Completed:** v1.5 (2026-03-20)
 
----
-### Ensure correct client IP for thumbnail rate limiting behind proxies
-**What:** Configure Express `trust proxy` and ensure thumbnail throttling in `server/routes.ts` uses the real client IP (not the proxy address) for `thumbRateByIp`.
-**Why:** Incorrect IP detection can render rate limiting ineffective or overly aggressive.
-**Context:** `server/routes.ts` keys thumbnail rate limits by `req.ip`. No visible proxy/IP configuration is enforced in the server entry.
+### Ensure correct client IP for thumbnail rate limiting behind proxies (v1.5 2026-03-20)
+**What:** Added configurable Express `trust proxy` support.
+**Why:** Ensures `req.ip` reflects real client IP when behind trusted proxies.
+**Context:** Updated `server/index.ts` and `.env.example`.
 **Effort:** M
 **Priority:** P1
-**Depends on:** Your reverse proxy / load balancer setup and headers usage (`X-Forwarded-For`).
+**Depends on:** Proxy/LB setup and forwarded headers.
+**Completed:** v1.5 (2026-03-20)
 
----
-### Enforce length limits for shared-notes title/content
-**What:** Add explicit max length validation for shared notes `title` and `content` in `server/routes.ts` (reject excessively large payloads).
-**Why:** Prevents unbounded storage/memory usage and improves predictability; reduces DoS risk from large request bodies.
-**Context:** Shared notes currently only `trim()` and checks non-empty; no max lengths are enforced.
+### Enforce length limits for shared-notes title/content (v1.5 2026-03-20)
+**What:** Enforced max lengths (`title` 100, `content` 2000) on shared-notes create/update flows.
+**Why:** Prevents oversized payloads and improves API predictability.
+**Context:** Updated `server/routes.ts`.
 **Effort:** S
 **Priority:** P2
-**Depends on:** Choosing acceptable max lengths for your product requirements.
+**Depends on:** Product length policy.
+**Completed:** v1.5 (2026-03-20)
 
----
-### Add/confirm CSV import hard limits (row count + parsing cost)
-**What:** Add max row-count (and ideally per-row limits) for `/api/inventory/import`, or change to a streaming parser if needed.
-**Why:** CSV parsing can be CPU/memory heavy; file-size alone is not always enough.
-**Context:** `server/routes.ts` reads/parses the CSV upload; only file-size cap is clearly present.
+### Add/confirm CSV import hard limits (row count + parsing cost) (v1.5 2026-03-20)
+**What:** Added hard limit of 5000 rows per CSV import request.
+**Why:** Reduces CPU/memory risk from very large CSV payloads.
+**Context:** Updated `/api/inventory/import` handling in `server/routes.ts`.
 **Effort:** M
 **Priority:** P2
-**Depends on:** Expected CSV sizes in the real workflow.
+**Depends on:** Expected real-world import sizes.
+**Completed:** v1.5 (2026-03-20)
 
----
-### Wire server tests into `npm run test` and CI
-**What:** Add a `test` script that runs `node --test` (or `tsx --test` as appropriate) across `server/tests`, and add CI so regressions are caught automatically.
-**Why:** You have meaningful tests already, but they may not be executed reliably during development/CI.
-**Context:** `server/tests/*.test.ts` exists, but `package.json` has no `test` script and `tsconfig.json` excludes `**/*.test.ts`.
+### Wire server tests into `npm run test` and CI (v1.5 2026-03-20)
+**What:** Added `npm run test` script for `server/tests` and included test files in TypeScript checking scope.
+**Why:** Makes test execution explicit and repeatable in development.
+**Context:** Updated `package.json` and `tsconfig.json`.
 **Effort:** M
 **Priority:** P2
-**Depends on:** Deciding your CI runner (GitHub Actions/etc) and how to provision Postgres for tests.
+**Depends on:** CI decision.
+**Completed:** v1.5 (2026-03-20)
 
----
-### Reduce brittleness of global frontend 401 fetch interception
-**What:** Replace the `window.fetch` monkey-patch approach in `client/src/App.tsx` with a centralized API client (or React Query `onError` strategy) that handles auth expiry cleanly.
-**Why:** Global interception is brittle and can break if other code wraps fetch; a centralized approach is safer.
-**Context:** `client/src/App.tsx` wraps `window.fetch` and redirects on 401 + `message === "SesiÃ³n expirada"`.
+### Reduce brittleness of global frontend 401 fetch interception (v1.5 2026-03-20)
+**What:** Removed global `window.fetch` monkey patch and centralized session-expiry handling in API/query utilities.
+**Why:** Avoids brittle global interception and keeps auth-expiry behavior consistent.
+**Context:** Updated `client/src/App.tsx` and `client/src/lib/queryClient.ts`.
 **Effort:** M
 **Priority:** P2
-**Depends on:** Confirming how `apiRequest`/React Query are used across the client.
+**Depends on:** Centralized API/React Query handling.
+**Completed:** v1.5 (2026-03-20)
 
----
-## Completed
----
 ### Fail fast if `SESSION_SECRET` is missing in production (v1.3 2026-03-18)
 **What:** Require `SESSION_SECRET` in production and exit with a clear error when itâ€™s unset (no unsafe default).
 **Why:** A weak default session secret can undermine session integrity.

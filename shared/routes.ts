@@ -22,9 +22,14 @@ export const api = {
       input: z.object({
         search: z.string().optional(),
         category: z.string().optional(),
+        limit: z.number().optional(),
+        offset: z.number().optional(),
       }).optional(),
       responses: {
-        200: z.array(z.custom<typeof inventoryItems.$inferSelect>()),
+        200: z.object({
+          items: z.array(z.custom<typeof inventoryItems.$inferSelect>()),
+          total: z.number(),
+        }),
       },
     },
     get: {

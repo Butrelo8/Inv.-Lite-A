@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, date, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, date, timestamp, jsonb, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -118,9 +118,33 @@ export const employeeDocuments = pgTable("employee_documents", {
 
 export type EmployeeDocument = typeof employeeDocuments.$inferSelect;
 
+export const opsEvents = pgTable(
+  "ops_events",
+  {
+    id: serial("id").primaryKey(),
+    eventType: text("event_type").notNull(),
+    severity: text("severity").notNull(),
+    source: text("source").notNull().default("api"),
+    environment: text("environment").notNull().default("development"),
+    payload: jsonb("payload"),
+    userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
+    ip: text("ip"),
+    requestId: text("request_id"),
+    endpoint: text("endpoint"),
+    method: text("method"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    eventTypeCreatedAtIdx: index("ops_events_event_type_created_at_idx").on(table.eventType, table.createdAt),
+    createdAtIdx: index("ops_events_created_at_idx").on(table.createdAt),
+    severityCreatedAtIdx: index("ops_events_severity_created_at_idx").on(table.severity, table.createdAt),
+  })
+);
+
 export type InventoryItem = typeof inventoryItems.$inferSelect;
 export type InventoryAttachment = typeof inventoryAttachments.$inferSelect;
 export type InsertInventoryItem = z.infer<typeof insertInventoryItemSchema>;
+export type OpsEvent = typeof opsEvents.$inferSelect;
 
 export type CreateItemRequest = InsertInventoryItem;
 export type UpdateItemRequest = Partial<InsertInventoryItem>;

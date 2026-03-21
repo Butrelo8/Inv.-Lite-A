@@ -19,6 +19,8 @@ import type { UserRole } from "@shared/schema";
 import { USER_ROLES } from "@shared/schema";
 import { ensureThumbnail, thumbsPath } from "./thumbnails";
 import { resolveSafeFilePath, resolveStoredFilePath } from "./path-utils";
+import { consumeLoginRateLimit, clearLoginRateLimitForUser } from "./rate-limiter";
+import { emitOpsEvent } from "./ops-events";
 import {
   INVENTORY_EXPORT_HEADERS_ADMIN,
   INVENTORY_EXPORT_HEADERS_VIEWER,
@@ -37,6 +39,9 @@ import {
 const THUMB_RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 const THUMB_RATE_LIMIT_MAX_REQUESTS = 12; // per IP per window
 const MAX_ORIGINAL_BYTES_FOR_THUMB = 8 * 1024 * 1024; // 8MB
+const MAX_SHARED_NOTE_TITLE_LEN = 100;
+const MAX_SHARED_NOTE_CONTENT_LEN = 2000;
+const MAX_CSV_IMPORT_ROWS = 5000;
 
 type ThumbRate = { windowStart: number; count: number };
 const thumbRateByIp = new Map<string, ThumbRate>();
@@ -68,6 +73,15 @@ function requireRole(...allowedRoles: UserRole[]) {
     const user = req.user as Express.User | undefined;
     const role = (user?.role ?? "viewer") as UserRole;
     if (allowedRoles.includes(role)) return next();
+    void emitOpsEvent({
+      eventType: "auth.forbidden",
+      severity: "warning",
+      endpoint: req.path,
+      method: req.method,
+      ip: getClientIp(req),
+      userId: Number.isFinite(user?.id) ? user!.id : null,
+      payload: { requiredRoles: allowedRoles, actualRole: role },
+    });
     res.status(403).json({ message: "Forbidden: insufficient permissions" });
   };
 }
@@ -169,16 +183,74 @@ export async function registerRoutes(
     // If `Origin`/`Referer` exist, we still require their host to match.
     const originOrRefererPresent = origin != null || referer != null;
     const ok = originOrRefererPresent ? (headerHostMatches(origin) || headerHostMatches(referer)) : secFetchOk;
-    if (!ok) return res.status(403).json({ message: "CSRF protection: invalid origin" });
+    if (!ok) {
+      void emitOpsEvent({
+        eventType: "auth.csrf_blocked",
+        severity: "warning",
+        endpoint: req.path,
+        method: req.method,
+        ip: getClientIp(req),
+        userId: Number.isFinite((req.user as any)?.id) ? (req.user as any).id : null,
+        payload: { origin, referer, secFetchSite },
+      });
+      return res.status(403).json({ message: "CSRF protection: invalid origin" });
+    }
     return next();
   });
 
-  app.post("/api/auth/login", (req, res, next) => {
-    passport.authenticate("local", (err: any, user: Express.User | false, info?: { message?: string }) => {
+  app.post("/api/auth/login", async (req, res, next) => {
+    const username = typeof (req.body as { username?: unknown })?.username === "string"
+      ? ((req.body as { username?: string }).username || "")
+      : "";
+    const ip = getClientIp(req);
+
+    try {
+      const limit = await consumeLoginRateLimit(ip, username);
+      if (!limit.allowed) {
+        res.setHeader("Retry-After", String(limit.retryAfterSeconds));
+        void emitOpsEvent({
+          eventType: "auth.rate_limit_hit",
+          severity: "warning",
+          endpoint: req.path,
+          method: req.method,
+          ip,
+          payload: { username, retryAfterSec: limit.retryAfterSeconds },
+        });
+        return res.status(429).json({ message: "Too many login attempts. Please try again later." });
+      }
+    } catch (err) {
+      console.error("Login rate limiter failure", { ip, username }, err);
+    }
+
+    passport.authenticate("local", async (err: any, user: Express.User | false, info?: { message?: string }) => {
       if (err) return next(err);
-      if (!user) return res.status(401).json({ message: info?.message || "Invalid username or password" });
+      if (!user) {
+        void emitOpsEvent({
+          eventType: "auth.login_failure",
+          severity: "warning",
+          endpoint: req.path,
+          method: req.method,
+          ip,
+          payload: { username, reason: info?.message || "invalid_credentials" },
+        });
+        return res.status(401).json({ message: info?.message || "Invalid username or password" });
+      }
+      try {
+        await clearLoginRateLimitForUser(ip, username);
+      } catch (clearErr) {
+        console.error("Failed to clear login rate limiter entry", { ip, username }, clearErr);
+      }
       req.login(user, (loginErr) => {
         if (loginErr) return next(loginErr);
+        void emitOpsEvent({
+          eventType: "auth.login_success",
+          severity: "info",
+          endpoint: req.path,
+          method: req.method,
+          ip,
+          userId: user.id,
+          payload: { username: user.username },
+        });
         res.json({ user: { id: user.id, username: user.username, role: user.role } });
       });
     })(req, res, next);
@@ -262,6 +334,12 @@ export async function registerRoutes(
     const itemId = rawItemId != null && rawItemId !== "" ? Number(rawItemId) : NaN;
     if (!title) return res.status(400).json({ message: "title is required" });
     if (!content) return res.status(400).json({ message: "content is required" });
+    if (title.length > MAX_SHARED_NOTE_TITLE_LEN) {
+      return res.status(400).json({ message: `title must be at most ${MAX_SHARED_NOTE_TITLE_LEN} characters` });
+    }
+    if (content.length > MAX_SHARED_NOTE_CONTENT_LEN) {
+      return res.status(400).json({ message: `content must be at most ${MAX_SHARED_NOTE_CONTENT_LEN} characters` });
+    }
     if (!Number.isFinite(itemId)) return res.status(400).json({ message: "itemId is required" });
 
     const userId = (req.user as any)?.id;
@@ -281,11 +359,17 @@ export async function registerRoutes(
     if (body.title !== undefined) {
       const title = typeof body.title === "string" ? body.title.trim() : "";
       if (!title) return res.status(400).json({ message: "title cannot be empty" });
+      if (title.length > MAX_SHARED_NOTE_TITLE_LEN) {
+        return res.status(400).json({ message: `title must be at most ${MAX_SHARED_NOTE_TITLE_LEN} characters` });
+      }
       updates.title = title;
     }
     if (body.content !== undefined) {
       const content = typeof body.content === "string" ? body.content.trim() : "";
       if (!content) return res.status(400).json({ message: "content cannot be empty" });
+      if (content.length > MAX_SHARED_NOTE_CONTENT_LEN) {
+        return res.status(400).json({ message: `content must be at most ${MAX_SHARED_NOTE_CONTENT_LEN} characters` });
+      }
       updates.content = content;
     }
 
@@ -713,6 +797,11 @@ export async function registerRoutes(
         skipEmptyLines: true,
         delimiter: delim,
       });
+      if (parsed.data.length > MAX_CSV_IMPORT_ROWS) {
+        return res.status(400).json({
+          message: `CSV exceeds maximum ${MAX_CSV_IMPORT_ROWS} rows`,
+        });
+      }
       const created: number[] = [];
       const errors: { row: number; message: string }[] = [];
       const normalize = (s: string) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -775,7 +864,18 @@ export async function registerRoutes(
           const userId = (req as any).user?.id;
           storage
             .addHistoryRecord({ productId: item.id, companyId: item.companyId ?? null, transactionType: "IMPORT", quantity: item.units, userId, remarks: item.name })
-            .catch((err) => console.error("History log failed (IMPORT)", { productId: item.id, userId }, err));
+            .catch((err) => {
+              console.error("History log failed (IMPORT)", { productId: item.id, userId }, err);
+              void emitOpsEvent({
+                eventType: "job.history_write_failure",
+                severity: "critical",
+                endpoint: req.path,
+                method: req.method,
+                ip: getClientIp(req),
+                userId: Number.isFinite(userId) ? userId : null,
+                payload: { action: "IMPORT", productId: item.id, error: err instanceof Error ? err.message : String(err) },
+              });
+            });
         } else {
           const errMsg = parsedRow.error.errors[0]?.message ?? "Validation failed";
           const field = parsedRow.error.errors[0]?.path?.[0];
@@ -783,12 +883,30 @@ export async function registerRoutes(
         }
       }
       const detectedHeaders = parsed.data[0] ? Object.keys(parsed.data[0]) : [];
+      void emitOpsEvent({
+        eventType: "job.import_success",
+        severity: "info",
+        endpoint: req.path,
+        method: req.method,
+        ip: getClientIp(req),
+        userId: Number.isFinite((req as any).user?.id) ? (req as any).user.id : null,
+        payload: { rowCount: created.length, errorCount: errors.length },
+      });
       res.json({
         created: created.length,
         errors,
         ...(created.length === 0 && errors.length > 0 && { hint: `Detected columns: ${detectedHeaders.join(", ") || "none"}. Ensure your CSV has headers matching: code, name (or codigo, nombre in Spanish).` }),
       });
     } catch (err) {
+      void emitOpsEvent({
+        eventType: "job.import_failure",
+        severity: "warning",
+        endpoint: req.path,
+        method: req.method,
+        ip: getClientIp(req),
+        userId: Number.isFinite((req as any).user?.id) ? (req as any).user.id : null,
+        payload: { error: err instanceof Error ? err.message : String(err) },
+      });
       res.status(400).json({ message: err instanceof Error ? err.message : "Import failed" });
     }
   });
@@ -808,7 +926,18 @@ export async function registerRoutes(
       const userId = (req as any).user?.id;
       storage
         .addHistoryRecord({ productId: item.id, companyId: item.companyId ?? null, transactionType: "CREATE", quantity: item.units, userId, remarks: item.name })
-        .catch((err) => console.error("History log failed (CREATE)", { productId: item.id, userId }, err));
+        .catch((err) => {
+          console.error("History log failed (CREATE)", { productId: item.id, userId }, err);
+          void emitOpsEvent({
+            eventType: "job.history_write_failure",
+            severity: "critical",
+            endpoint: req.path,
+            method: req.method,
+            ip: getClientIp(req),
+            userId: Number.isFinite(userId) ? userId : null,
+            payload: { action: "CREATE", productId: item.id, error: err instanceof Error ? err.message : String(err) },
+          });
+        });
       res.status(201).json(item);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -833,7 +962,18 @@ export async function registerRoutes(
       const qtyDelta = (input.units ?? prevItem?.units ?? item.units) - (prevItem?.units ?? 0);
       storage
         .addHistoryRecord({ productId: item.id, companyId: item.companyId ?? null, transactionType: "ADJUSTMENT", quantity: qtyDelta, userId, remarks: item.name })
-        .catch((err) => console.error("History log failed (ADJUSTMENT)", { productId: item.id, userId, qtyDelta }, err));
+        .catch((err) => {
+          console.error("History log failed (ADJUSTMENT)", { productId: item.id, userId, qtyDelta }, err);
+          void emitOpsEvent({
+            eventType: "job.history_write_failure",
+            severity: "critical",
+            endpoint: req.path,
+            method: req.method,
+            ip: getClientIp(req),
+            userId: Number.isFinite(userId) ? userId : null,
+            payload: { action: "ADJUSTMENT", productId: item.id, qtyDelta, error: err instanceof Error ? err.message : String(err) },
+          });
+        });
       res.json(item);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -878,9 +1018,28 @@ export async function registerRoutes(
     }
     const itemName = item?.name ?? `Item #${id}`;
     const userId = (req as any).user?.id;
-    storage
-      .addHistoryRecord({ productId: id, companyId: item?.companyId ?? null, transactionType: "DELETE", quantity: item?.units ?? 0, userId, remarks: itemName })
-      .catch((err) => console.error("History log failed (DELETE)", { productId: id, userId }, err));
+    try {
+      // Keep FK integrity: write DELETE history while the item row still exists.
+      await storage.addHistoryRecord({
+        productId: id,
+        companyId: item?.companyId ?? null,
+        transactionType: "DELETE",
+        quantity: item?.units ?? 0,
+        userId,
+        remarks: itemName,
+      });
+    } catch (err) {
+      console.error("History log failed (DELETE)", { productId: id, userId }, err);
+      void emitOpsEvent({
+        eventType: "job.history_write_failure",
+        severity: "critical",
+        endpoint: req.path,
+        method: req.method,
+        ip: getClientIp(req),
+        userId: Number.isFinite(userId) ? userId : null,
+        payload: { action: "DELETE", productId: id, error: err instanceof Error ? err.message : String(err) },
+      });
+    }
     await storage.deleteItem(id);
     res.status(204).send();
   });
@@ -974,6 +1133,15 @@ export async function registerRoutes(
     } else {
       current.count += 1;
       if (current.count > THUMB_RATE_LIMIT_MAX_REQUESTS) {
+        void emitOpsEvent({
+          eventType: "auth.rate_limit_hit",
+          severity: "warning",
+          endpoint: req.path,
+          method: req.method,
+          ip,
+          userId: Number.isFinite((req as any).user?.id) ? (req as any).user.id : null,
+          payload: { category: "thumbnail", maxRequests: THUMB_RATE_LIMIT_MAX_REQUESTS },
+        });
         return res.status(429).json({ message: "Too many thumbnail requests" });
       }
     }
@@ -1017,6 +1185,15 @@ export async function registerRoutes(
         }
       } catch (err) {
         console.error("Thumbnail generation failed", { base, safeFilename }, err);
+        void emitOpsEvent({
+          eventType: "job.thumbnail_failure",
+          severity: "warning",
+          endpoint: req.path,
+          method: req.method,
+          ip,
+          userId: Number.isFinite((req as any).user?.id) ? (req as any).user.id : null,
+          payload: { filename: safeFilename, error: err instanceof Error ? err.message : String(err) },
+        });
         return res.status(500).json({ message: "Thumbnail generation failed" });
       } finally {
         thumbGenerationInFlight.delete(thumbFilePath);
@@ -1049,6 +1226,20 @@ export async function registerRoutes(
     }
     const [updated] = await db.select().from(inventoryItems).where(eq(inventoryItems.id, id));
     res.json({ ...updated, attachments });
+  });
+
+  app.get("/api/ops-health/summary", requireAuth, requireRole("editor", "admin"), async (_req, res) => {
+    const summary = await storage.getOpsSummary();
+    res.json(summary);
+  });
+
+  app.get("/api/ops-health/events", requireAuth, requireRole("editor", "admin"), async (req, res) => {
+    const limitRaw = Number(req.query.limit ?? 100);
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, limitRaw)) : 100;
+    const severityRaw = String(req.query.severity ?? "").trim();
+    const severity = severityRaw === "critical" || severityRaw === "warning" || severityRaw === "info" ? severityRaw : undefined;
+    const events = await storage.getOpsEventFeed(limit, severity);
+    res.json(events);
   });
 
   return httpServer;

@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { Switch, Route, useLocation, Redirect } from "wouter";
 import { ThemeProvider } from "next-themes";
 import { queryClient } from "./lib/queryClient";
@@ -13,36 +12,11 @@ import Employees from "@/pages/Employees";
 import Companies from "@/pages/Companies";
 import SharedNotes from "@/pages/SharedNotes";
 import Users from "@/pages/Users";
+import OpsHealth from "@/pages/OpsHealth";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
-
-/** On 401 "Sesión expirada", clear auth and redirect to login so the user sees the message. */
-function useSessionExpiredRedirect() {
-  useEffect(() => {
-    const origFetch = window.fetch;
-    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-      const res = await origFetch(input, init);
-      if (res.status === 401) {
-        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        if (url.includes("/api")) {
-          const cloned = res.clone();
-          const data = await cloned.json().catch(() => ({}));
-          if (data?.message === "Sesión expirada") {
-            queryClient.setQueryData(["/api/auth/me"], null);
-            window.location.href = "/login?expired=1";
-            return res;
-          }
-        }
-      }
-      return res;
-    };
-    return () => {
-      window.fetch = origFetch;
-    };
-  }, []);
-}
 
 function Router() {
   const { user, isLoading } = useAuth();
@@ -121,13 +95,21 @@ function Router() {
           </AppLayout>
         )}
       </Route>
+      <Route path="/ops-health">
+        {((user?.role ?? "viewer") === "viewer") ? (
+          <Redirect to="/" />
+        ) : (
+          <AppLayout>
+            <OpsHealth />
+          </AppLayout>
+        )}
+      </Route>
       <Route component={NotFound} />
     </Switch>
   );
 }
 
 function App() {
-  useSessionExpiredRedirect();
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider attribute="class" defaultTheme="system" storageKey="ecooceano-theme">

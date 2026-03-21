@@ -432,12 +432,13 @@ export function InventoryForm({ defaultValues, onSubmit, isSubmitting, onCancel 
             )}
           />
 
+          {canEdit && (
           <div className="md:col-span-2 border border-border rounded-lg p-4 bg-muted/20 space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="font-medium">Notas compartidas</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Se muestran a todos los roles. Solo editor/admin puede crear/editar/eliminar.
+                  Solo visible para editor/admin. El viewer no la ve.
                 </p>
               </div>
             </div>
@@ -545,6 +546,7 @@ export function InventoryForm({ defaultValues, onSubmit, isSubmitting, onCancel 
               </div>
             )}
           </div>
+          )}
 
           <Dialog
             open={editingSharedNote != null}

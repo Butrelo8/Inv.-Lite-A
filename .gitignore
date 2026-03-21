@@ -1,6 +1,36 @@
 node_modules
+.env
 dist
 .DS_Store
 server/public
 vite.config.ts.*
 *.tar.gz
+uploads
+backups
+
+# Inventory photo exports (sensitive)
+Copia de Inventario/
+Copia de Inventario - copia/
+*.heic
+*.HEIC
+
+# Database dumps
+backup.sql
+*.sql.backup
+
+# Local/agent state (do not commit)
+.local/
+.replit/
+
+# Large/binary artifacts (keep only the app's committed public assets)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.pdf
+!client/public/**
+!client/public/logo.jpg
+
+# Docker local overrides (do not commit)
+docker-compose.override.yml
