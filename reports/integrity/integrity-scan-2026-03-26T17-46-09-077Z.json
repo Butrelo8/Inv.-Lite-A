@@ -1,0 +1,179 @@
+{
+  "ok": false,
+  "scanId": "integrity_scan_2026-03-26T17-46-09-077Z",
+  "startedAt": "2026-03-26T17:46:09.077Z",
+  "finishedAt": "2026-03-26T17:46:09.120Z",
+  "durationSec": 0,
+  "summary": {
+    "totalFindings": 5,
+    "totalIssues": 52
+  },
+  "findings": [
+    {
+      "id": "orphan_inventory_attachments",
+      "title": "Orphan inventory attachments",
+      "ok": true,
+      "count": 0,
+      "sample": [],
+      "details": "Attachments that reference a missing inventory item."
+    },
+    {
+      "id": "orphan_shared_notes",
+      "title": "Orphan shared notes",
+      "ok": true,
+      "count": 0,
+      "sample": [],
+      "details": "Shared notes that reference a missing inventory item."
+    },
+    {
+      "id": "orphan_employee_documents",
+      "title": "Orphan employee document links",
+      "ok": true,
+      "count": 0,
+      "sample": [],
+      "details": "Employee documents linked to a missing inventory item."
+    },
+    {
+      "id": "history_fk_drift",
+      "title": "History foreign-key drift",
+      "ok": true,
+      "count": 0,
+      "sample": [],
+      "details": "History entries whose product/user/company references no longer exist."
+    },
+    {
+      "id": "missing_files_for_db_references",
+      "title": "DB-referenced files missing on disk",
+      "ok": false,
+      "count": 52,
+      "sample": [
+        {
+          "origin": "inventory_items.image_url",
+          "recordId": 69,
+          "fileUrl": "/uploads/69-1770828707582.jpg"
+        },
+        {
+          "origin": "inventory_items.image_url",
+          "recordId": 91,
+          "fileUrl": "/uploads/91-1771045038953.jpg"
+        },
+        {
+          "origin": "inventory_items.image_url",
+          "recordId": 85,
+          "fileUrl": "/uploads/85-1770828690361.jpg"
+        },
+        {
+          "origin": "inventory_items.image_url",
+          "recordId": 108,
+          "fileUrl": "/uploads/108-1772220808670.jpg"
+        },
+        {
+          "origin": "inventory_items.image_url",
+          "recordId": 116,
+          "fileUrl": "/uploads/116-1772568318528.jpeg"
+        },
+        {
+          "origin": "inventory_items.image_url",
+          "recordId": 112,
+          "fileUrl": "/uploads/112-1772565081528.jpg"
+        },
+        {
+          "origin": "inventory_items.image_url",
+          "recordId": 111,
+          "fileUrl": "/uploads/111-1772221603372.jpg"
+        },
+        {
+          "origin": "inventory_items.image_url",
+          "recordId": 109,
+          "fileUrl": "/uploads/109-1772221112832.jpg"
+        },
+        {
+          "origin": "inventory_items.image_url",
+          "recordId": 114,
+          "fileUrl": "/uploads/114-1772565638940.jpg"
+        },
+        {
+          "origin": "inventory_items.image_url",
+          "recordId": 113,
+          "fileUrl": "/uploads/113-1772565431451.jpg"
+        },
+        {
+          "origin": "inventory_items.image_url",
+          "recordId": 115,
+          "fileUrl": "/uploads/115-1772566422491.jpg"
+        },
+        {
+          "origin": "inventory_items.image_url",
+          "recordId": 118,
+          "fileUrl": "/uploads/118-1772657954790.jpeg"
+        },
+        {
+          "origin": "inventory_attachments.image_url",
+          "recordId": 343,
+          "fileUrl": "/uploads/76-1772134339685.jpg"
+        },
+        {
+          "origin": "inventory_attachments.image_url",
+          "recordId": 347,
+          "fileUrl": "/uploads/108-1772220808670.jpg"
+        },
+        {
+          "origin": "inventory_attachments.image_url",
+          "recordId": 349,
+          "fileUrl": "/uploads/108-1772220813404.jpg"
+        },
+        {
+          "origin": "inventory_attachments.image_url",
+          "recordId": 350,
+          "fileUrl": "/uploads/109-1772221112832.jpg"
+        },
+        {
+          "origin": "inventory_attachments.image_url",
+          "recordId": 351,
+          "fileUrl": "/uploads/109-1772221120237.jpg"
+        },
+        {
+          "origin": "inventory_attachments.image_url",
+          "recordId": 355,
+          "fileUrl": "/uploads/111-1772221603372.jpg"
+        },
+        {
+          "origin": "inventory_attachments.image_url",
+          "recordId": 356,
+          "fileUrl": "/uploads/111-1772221640583.jpg"
+        },
+        {
+          "origin": "inventory_attachments.image_url",
+          "recordId": 357,
+          "fileUrl": "/uploads/111-1772221669540.jpg"
+        },
+        {
+          "origin": "inventory_attachments.image_url",
+          "recordId": 358,
+          "fileUrl": "/uploads/109-1772221747256.jpg"
+        },
+        {
+          "origin": "inventory_attachments.image_url",
+          "recordId": 359,
+          "fileUrl": "/uploads/112-1772565081528.jpg"
+        },
+        {
+          "origin": "inventory_attachments.image_url",
+          "recordId": 360,
+          "fileUrl": "/uploads/112-1772565106190.jpg"
+        },
+        {
+          "origin": "inventory_attachments.image_url",
+          "recordId": 361,
+          "fileUrl": "/uploads/112-1772565163734.jpg"
+        },
+        {
+          "origin": "inventory_attachments.image_url",
+          "recordId": 362,
+          "fileUrl": "/uploads/113-1772565431451.jpg"
+        }
+      ],
+      "details": "Rows reference file paths that are not present in local storage."
+    }
+  ]
+}

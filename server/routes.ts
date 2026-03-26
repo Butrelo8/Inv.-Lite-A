@@ -2,6 +2,9 @@ import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "http";
 import path from "path";
 import fs from "fs";
+import fsPromises from "fs/promises";
+import { randomBytes } from "crypto";
+import pg from "pg";
 import multer from "multer";
 import Papa from "papaparse";
 import ExcelJS from "exceljs";
@@ -13,7 +16,7 @@ import { api } from "@shared/routes";
 import { z } from "zod";
 import { insertInventoryItemSchema, inventoryAttachments } from "@shared/schema";
 import { eq } from "drizzle-orm";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { inventoryItems } from "@shared/schema";
 import type { UserRole } from "@shared/schema";
 import { USER_ROLES } from "@shared/schema";
@@ -42,12 +45,117 @@ const MAX_ORIGINAL_BYTES_FOR_THUMB = 8 * 1024 * 1024; // 8MB
 const MAX_SHARED_NOTE_TITLE_LEN = 100;
 const MAX_SHARED_NOTE_CONTENT_LEN = 2000;
 const MAX_CSV_IMPORT_ROWS = 5000;
+const BULK_UNDO_WINDOW_MIN = parseInt(process.env.BULK_UNDO_WINDOW_MIN ?? "10", 10);
 
 type ThumbRate = { windowStart: number; count: number };
 const thumbRateByIp = new Map<string, ThumbRate>();
 
 // Coalesce concurrent generation for the same thumb so only one `sharp()` runs.
 const thumbGenerationInFlight = new Map<string, Promise<void>>();
+
+const bulkUpdateSchema = z.object({
+  ids: z.array(z.number().int().positive()).min(1).max(200),
+  updates: z
+    .object({
+      condition: z.string().trim().min(1).max(80).optional(),
+      responsible: z.string().trim().max(120).nullable().optional(),
+    })
+    .refine((v) => v.condition !== undefined || v.responsible !== undefined, { message: "No updates provided" }),
+  reason: z.string().trim().max(240).optional(),
+});
+
+const bulkDeleteSchema = z.object({
+  ids: z.array(z.number().int().positive()).min(1).max(200),
+  reason: z.string().trim().max(240).optional(),
+});
+
+const bulkArchiveSchema = z.object({
+  ids: z.array(z.number().int().positive()).min(1).max(200),
+  reason: z.string().trim().max(240).optional(),
+});
+
+function uniqueIds(ids: number[]): number[] {
+  return Array.from(new Set(ids));
+}
+
+function buildUndoToken(): string {
+  return `bulk_${Date.now()}_${randomBytes(8).toString("hex")}`;
+}
+
+function buildDeleteHistoryRemarks(prefix: string, name: string, undoToken: string, reason?: string): string {
+  const reasonPart = reason ? ` (${reason})` : "";
+  return `${prefix}: ${name}${reasonPart} [undo:${undoToken}]`;
+}
+
+function extractUndoTokenFromRemarks(remarks?: string | null): string | null {
+  if (!remarks) return null;
+  const match = remarks.match(/\[undo:([A-Za-z0-9_]+)\]/);
+  return match?.[1] ?? null;
+}
+
+async function restoreDeleteUndoByToken(client: pg.PoolClient, undoToken: string, userId: number | null) {
+  const rowRes = await client.query(
+    `select id, action_type, payload, expires_at, consumed_at
+     from inventory_bulk_undo
+     where token = $1
+     for update`,
+    [undoToken],
+  );
+  const row = rowRes.rows[0] as
+    | {
+        id: number;
+        action_type: string;
+        payload: { items: Record<string, unknown>[]; attachments: Record<string, unknown>[] };
+        expires_at: Date;
+        consumed_at: Date | null;
+      }
+    | undefined;
+  if (!row) return { status: 404 as const, message: "Undo token not found" };
+  if (row.consumed_at) return { status: 409 as const, message: "Undo token already consumed" };
+  if (new Date(row.expires_at).getTime() < Date.now()) return { status: 410 as const, message: "Undo token expired" };
+  if (row.action_type !== "bulk_delete" && row.action_type !== "single_delete") {
+    return { status: 400 as const, message: "Unsupported undo token type" };
+  }
+
+  const payload = row.payload || { items: [], attachments: [] };
+  for (const item of payload.items || []) {
+    await client.query(
+      `insert into inventory_items
+        (id, code, name, serial_number, size, units, condition, purchase_date, responsible, useful_life, category, image_url, company_id, notes, created_at, updated_at)
+       values
+        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+       on conflict (id) do nothing`,
+      [
+        item.id, item.code, item.name, item.serial_number, item.size, item.units, item.condition, item.purchase_date,
+        item.responsible, item.useful_life, item.category, item.image_url, item.company_id, item.notes, item.created_at, item.updated_at,
+      ],
+    );
+  }
+  for (const attachment of payload.attachments || []) {
+    await client.query(
+      `insert into inventory_attachments (id, item_id, image_url)
+       values ($1, $2, $3)
+       on conflict (id) do nothing`,
+      [attachment.id, attachment.item_id, attachment.image_url],
+    );
+  }
+  await client.query(`update inventory_bulk_undo set consumed_at = now() where id = $1`, [row.id]);
+
+  for (const item of payload.items || []) {
+    storage
+      .addHistoryRecord({
+        productId: Number(item.id),
+        companyId: Number.isFinite(Number(item.company_id)) ? Number(item.company_id) : null,
+        transactionType: "CREATE",
+        quantity: Number(item.units ?? 0),
+        userId,
+        remarks: `${row.action_type === "bulk_delete" ? "UNDO_BULK_DELETE" : "UNDO_DELETE"}: ${String(item.name ?? `Item #${item.id}`)}`,
+      })
+      .catch(() => undefined);
+  }
+
+  return { status: 200 as const, restored: (payload.items || []).length };
+}
 
 function getClientIp(req: Request): string {
   return (req.ip || "unknown").toString();
@@ -87,11 +195,40 @@ function requireRole(...allowedRoles: UserRole[]) {
 }
 
 const uploadsPath = path.join(process.cwd(), "uploads");
+
+function isHeicUpload(file: Express.Multer.File): boolean {
+  const ext = path.extname(file.originalname || "").toLowerCase();
+  const mime = (file.mimetype || "").toLowerCase();
+  return ext === ".heic" || ext === ".heif" || mime === "image/heic" || mime === "image/heif";
+}
+
+async function normalizeHeicToJpeg(file: Express.Multer.File): Promise<Express.Multer.File> {
+  if (!isHeicUpload(file)) return file;
+  const heicConvertModule = await import("heic-convert");
+  const heicConvert =
+    (heicConvertModule as { default?: (options: { buffer: Buffer; format: "JPEG" | "PNG"; quality?: number }) => Promise<ArrayBuffer | Buffer> })
+      .default ??
+    (heicConvertModule as unknown as (options: { buffer: Buffer; format: "JPEG" | "PNG"; quality?: number }) => Promise<ArrayBuffer | Buffer>);
+  const input = await fsPromises.readFile(file.path);
+  const converted = await heicConvert({
+    buffer: input,
+    format: "JPEG",
+    quality: 0.92,
+  });
+  const jpgPath = file.path.replace(/\.(heic|heif)$/i, ".jpg");
+  await fsPromises.writeFile(jpgPath, Buffer.from(converted));
+  await fsPromises.unlink(file.path).catch(() => undefined);
+  file.path = jpgPath;
+  file.filename = path.basename(jpgPath);
+  file.mimetype = "image/jpeg";
+  return file;
+}
+
 const imageStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadsPath),
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname) || ".jpg";
-    const safeExt = [".jpg", ".jpeg", ".png", ".gif", ".webp"].includes(ext.toLowerCase()) ? ext : ".jpg";
+    const safeExt = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif"].includes(ext.toLowerCase()) ? ext : ".jpg";
     cb(null, `${req.params.id}-${Date.now()}${safeExt}`);
   },
 });
@@ -99,7 +236,10 @@ const imageUpload = multer({
   storage: imageStorage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
   fileFilter: (_req, file, cb) => {
-    const allowed = /^image\/(jpeg|jpg|png|gif|webp)$/i.test(file.mimetype);
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const allowedMime = /^image\/(jpeg|jpg|png|gif|webp|heic|heif)$/i.test(file.mimetype);
+    const allowedExt = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif"].includes(ext);
+    const allowed = allowedMime || allowedExt;
     cb(null, allowed);
   },
 });
@@ -305,7 +445,82 @@ export async function registerRoutes(
       storage.getHistory(limit, offset, productId, filters),
       storage.getHistoryCount(productId, filters),
     ]);
-    res.json({ entries, total });
+    const tokens = Array.from(
+      new Set(
+        entries
+          .filter((entry) => entry.transactionType === "DELETE")
+          .map((entry) => extractUndoTokenFromRemarks(entry.remarks))
+          .filter((token): token is string => !!token),
+      ),
+    );
+    const undoRows = tokens.length > 0
+      ? await pool.query(
+          `select token, action_type, expires_at, consumed_at
+           from inventory_bulk_undo
+           where token = any($1::text[])`,
+          [tokens],
+        )
+      : { rows: [] };
+    const undoByToken = new Map(
+      undoRows.rows.map((r: { token: string; action_type: string; expires_at: Date; consumed_at: Date | null }) => [r.token, r]),
+    );
+    const now = Date.now();
+    const enriched = entries.map((entry) => {
+      const undoToken = extractUndoTokenFromRemarks(entry.remarks);
+      const undo = undoToken ? undoByToken.get(undoToken) : undefined;
+      const undoExpiresAt = undo?.expires_at ? new Date(undo.expires_at).toISOString() : null;
+      const canRevert = !!(
+        entry.transactionType === "DELETE"
+        && undoToken
+        && undo
+        && !undo.consumed_at
+        && new Date(undo.expires_at).getTime() >= now
+      );
+      return {
+        ...entry,
+        undoToken: undoToken ?? null,
+        undoExpiresAt,
+        canRevert,
+        revertKind: undo?.action_type === "bulk_delete" ? "bulk_delete" : undo?.action_type === "single_delete" ? "single_delete" : null,
+      };
+    });
+    res.json({ entries: enriched, total });
+  });
+
+  app.post("/api/history/:id/revert", requireAuth, requireRole("editor", "admin"), async (req, res) => {
+    const historyId = Number(req.params.id);
+    if (!Number.isFinite(historyId)) return res.status(400).json({ message: "Invalid history id" });
+    const userId = Number.isFinite((req as any).user?.id) ? (req as any).user.id : null;
+    const historyRes = await pool.query(
+      `select id, transaction_type, remarks
+       from inventory_history
+       where id = $1`,
+      [historyId],
+    );
+    const historyRow = historyRes.rows[0] as { id: number; transaction_type: string; remarks: string | null } | undefined;
+    if (!historyRow) return res.status(404).json({ message: "History entry not found" });
+    if (historyRow.transaction_type !== "DELETE") {
+      return res.status(400).json({ message: "Only delete history entries can be reverted" });
+    }
+    const undoToken = extractUndoTokenFromRemarks(historyRow.remarks);
+    if (!undoToken) return res.status(400).json({ message: "History entry is not revertible" });
+
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      const result = await restoreDeleteUndoByToken(client, undoToken, userId);
+      if (result.status !== 200) {
+        await client.query("rollback");
+        return res.status(result.status).json({ message: result.message });
+      }
+      await client.query("commit");
+      return res.json({ restored: result.restored, undoToken });
+    } catch (err) {
+      await client.query("rollback").catch(() => undefined);
+      return res.status(500).json({ message: err instanceof Error ? err.message : "Revert failed" });
+    } finally {
+      client.release();
+    }
   });
 
   app.get("/api/history/users", requireAuth, requireRole("editor", "admin"), async (_req, res) => {
@@ -989,46 +1204,32 @@ export async function registerRoutes(
   app.delete(api.inventory.delete.path, requireAuth, requireRole("editor", "admin"), async (req, res) => {
     const id = Number(req.params.id);
     const item = await storage.getItem(id);
-    if (item?.imageUrl) {
-      const imgPath = resolveStoredFilePath(uploadsPath, item.imageUrl);
-      if (!imgPath) {
-        console.error("Refusing to unlink inventory image outside uploadsPath", { itemId: id, imageUrl: item.imageUrl });
-      } else if (fs.existsSync(imgPath)) {
-        try {
-          const st = fs.statSync(imgPath);
-          if (st.isFile()) fs.unlinkSync(imgPath);
-        } catch (err) {
-          console.error("Failed to unlink inventory image", { itemId: id, imgPath }, err);
-        }
-      }
-    }
+    if (!item) return res.status(404).json({ message: "Item not found" });
     const attachments = await storage.getAttachments(id);
-    for (const a of attachments) {
-      const p = resolveStoredFilePath(uploadsPath, a.imageUrl);
-      if (!p) {
-        console.error("Refusing to unlink inventory attachment outside uploadsPath", { itemId: id, attachmentId: a.id, imageUrl: a.imageUrl });
-      } else if (fs.existsSync(p)) {
-        try {
-          const st = fs.statSync(p);
-          if (st.isFile()) fs.unlinkSync(p);
-        } catch (err) {
-          console.error("Failed to unlink inventory attachment image", { itemId: id, attachmentId: a.id, p }, err);
-        }
-      }
-    }
-    const itemName = item?.name ?? `Item #${id}`;
+    const undoToken = buildUndoToken();
+    const undoExpiresAt = new Date(Date.now() + BULK_UNDO_WINDOW_MIN * 60_000);
+    const payload = { items: [item], attachments, deletedIds: [id] };
+    const itemName = item.name ?? `Item #${id}`;
+    const remarks = buildDeleteHistoryRemarks("DELETE", itemName, undoToken);
     const userId = (req as any).user?.id;
+    const client = await pool.connect();
     try {
+      await client.query("begin");
+      await client.query(
+        `insert into inventory_bulk_undo (token, action_type, payload, expires_at, created_by_user_id)
+         values ($1, $2, $3::jsonb, $4, $5)`,
+        [undoToken, "single_delete", JSON.stringify(payload), undoExpiresAt.toISOString(), userId ?? null],
+      );
       // Keep FK integrity: write DELETE history while the item row still exists.
-      await storage.addHistoryRecord({
-        productId: id,
-        companyId: item?.companyId ?? null,
-        transactionType: "DELETE",
-        quantity: item?.units ?? 0,
-        userId,
-        remarks: itemName,
-      });
+      await client.query(
+        `insert into inventory_history (product_id, company_id, transaction_type, quantity, user_id, remarks)
+         values ($1, $2, $3, $4, $5, $6)`,
+        [id, item.companyId ?? null, "DELETE", item.units ?? 0, userId ?? null, remarks],
+      );
+      await client.query("delete from inventory_items where id = $1", [id]);
+      await client.query("commit");
     } catch (err) {
+      await client.query("rollback").catch(() => undefined);
       console.error("History log failed (DELETE)", { productId: id, userId }, err);
       void emitOpsEvent({
         eventType: "job.history_write_failure",
@@ -1039,9 +1240,158 @@ export async function registerRoutes(
         userId: Number.isFinite(userId) ? userId : null,
         payload: { action: "DELETE", productId: id, error: err instanceof Error ? err.message : String(err) },
       });
+      return res.status(500).json({ message: "Delete failed" });
+    } finally {
+      client.release();
     }
-    await storage.deleteItem(id);
-    res.status(204).send();
+    res.status(200).json({ deleted: 1, undoToken, undoExpiresAt: undoExpiresAt.toISOString() });
+  });
+
+  app.post("/api/inventory/bulk/update", requireAuth, requireRole("editor", "admin"), async (req, res) => {
+    const parsed = bulkUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid payload" });
+    }
+    const ids = uniqueIds(parsed.data.ids);
+    const userId = Number.isFinite((req as any).user?.id) ? (req as any).user.id : null;
+    const existing = await storage.getItemsByIds(ids);
+    const existingById = new Map(existing.map((i) => [i.id, i]));
+    const missing = ids.filter((id) => !existingById.has(id));
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+    if (parsed.data.updates.condition !== undefined) updates.condition = parsed.data.updates.condition;
+    if (parsed.data.updates.responsible !== undefined) updates.responsible = parsed.data.updates.responsible;
+
+    for (const item of existing) {
+      await db.update(inventoryItems).set(updates).where(eq(inventoryItems.id, item.id));
+      const updatedItem = await storage.getItem(item.id);
+      const remarks = `BULK_UPDATE: ${item.name}${parsed.data.reason ? ` (${parsed.data.reason})` : ""}`;
+      const qtyDelta = (updatedItem?.units ?? item.units) - item.units;
+      storage
+        .addHistoryRecord({
+          productId: item.id,
+          companyId: updatedItem?.companyId ?? item.companyId ?? null,
+          transactionType: "ADJUSTMENT",
+          quantity: qtyDelta,
+          userId,
+          remarks,
+        })
+        .catch((err) => {
+          console.error("History log failed (BULK_UPDATE)", { productId: item.id, userId }, err);
+        });
+    }
+
+    res.json({ updated: existing.length, missing });
+  });
+
+  app.post("/api/inventory/bulk/archive", requireAuth, requireRole("editor", "admin"), async (req, res) => {
+    const parsed = bulkArchiveSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid payload" });
+    }
+    const deduped = uniqueIds(parsed.data.ids);
+    const existing = await storage.getItemsByIds(deduped);
+    const existingById = new Map(existing.map((i) => [i.id, i]));
+    const missing = deduped.filter((id) => !existingById.has(id));
+    const userId = Number.isFinite((req as any).user?.id) ? (req as any).user.id : null;
+    for (const item of existing) {
+      await db.update(inventoryItems).set({ condition: "Archived", updatedAt: new Date() }).where(eq(inventoryItems.id, item.id));
+      storage
+        .addHistoryRecord({
+          productId: item.id,
+          companyId: item.companyId ?? null,
+          transactionType: "ADJUSTMENT",
+          quantity: 0,
+          userId,
+          remarks: `BULK_ARCHIVE: ${item.name}${parsed.data.reason ? ` (${parsed.data.reason})` : ""}`,
+        })
+        .catch(() => undefined);
+    }
+    res.json({ archived: existing.length, missing });
+  });
+
+  app.post("/api/inventory/bulk/delete", requireAuth, requireRole("editor", "admin"), async (req, res) => {
+    const parsed = bulkDeleteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid payload" });
+    }
+    const ids = uniqueIds(parsed.data.ids);
+    const userId = Number.isFinite((req as any).user?.id) ? (req as any).user.id : null;
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      const itemsRes = await client.query("select * from inventory_items where id = any($1::int[])", [ids]);
+      const items = itemsRes.rows as Array<Record<string, unknown> & { id: number; name?: string; units?: number; company_id?: number | null }>;
+      const foundIds = new Set(items.map((i) => Number(i.id)));
+      const missing = ids.filter((id) => !foundIds.has(id));
+      if (items.length === 0) {
+        await client.query("rollback");
+        return res.json({ deleted: 0, missing, undoToken: null, undoExpiresAt: null });
+      }
+      const attachmentsRes = await client.query("select * from inventory_attachments where item_id = any($1::int[])", [items.map((i) => Number(i.id))]);
+      const undoToken = buildUndoToken();
+      const undoExpiresAt = new Date(Date.now() + BULK_UNDO_WINDOW_MIN * 60_000);
+      const payload = {
+        items,
+        attachments: attachmentsRes.rows,
+        deletedIds: items.map((i) => Number(i.id)),
+      };
+      await client.query(
+        `insert into inventory_bulk_undo (token, action_type, payload, expires_at, created_by_user_id)
+         values ($1, $2, $3::jsonb, $4, $5)`,
+        [undoToken, "bulk_delete", JSON.stringify(payload), undoExpiresAt.toISOString(), userId],
+      );
+      await client.query("delete from inventory_items where id = any($1::int[])", [items.map((i) => Number(i.id))]);
+      await client.query("commit");
+
+      for (const item of items) {
+        storage
+          .addHistoryRecord({
+            productId: Number(item.id),
+            companyId: Number.isFinite(Number(item.company_id)) ? Number(item.company_id) : null,
+            transactionType: "DELETE",
+            quantity: Number(item.units ?? 0),
+            userId,
+            remarks: buildDeleteHistoryRemarks("BULK_DELETE", String(item.name ?? `Item #${item.id}`), undoToken, parsed.data.reason),
+          })
+          .catch(() => undefined);
+      }
+
+      return res.json({
+        deleted: items.length,
+        missing,
+        undoToken,
+        undoExpiresAt: undoExpiresAt.toISOString(),
+      });
+    } catch (err) {
+      await client.query("rollback").catch(() => undefined);
+      return res.status(500).json({ message: err instanceof Error ? err.message : "Bulk delete failed" });
+    } finally {
+      client.release();
+    }
+  });
+
+  app.post("/api/inventory/bulk/undo", requireAuth, requireRole("editor", "admin"), async (req, res) => {
+    const undoToken = typeof (req.body as { undoToken?: unknown })?.undoToken === "string"
+      ? (req.body as { undoToken: string }).undoToken.trim()
+      : "";
+    if (!undoToken) return res.status(400).json({ message: "undoToken is required" });
+    const userId = Number.isFinite((req as any).user?.id) ? (req as any).user.id : null;
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      const result = await restoreDeleteUndoByToken(client, undoToken, userId);
+      if (result.status !== 200) {
+        await client.query("rollback");
+        return res.status(result.status).json({ message: result.message });
+      }
+      await client.query("commit");
+      return res.json({ restored: result.restored });
+    } catch (err) {
+      await client.query("rollback").catch(() => undefined);
+      return res.status(500).json({ message: err instanceof Error ? err.message : "Undo failed" });
+    } finally {
+      client.release();
+    }
   });
 
   app.get("/api/inventory/:id/documents", requireAuth, async (req, res) => {
@@ -1207,9 +1557,16 @@ export async function registerRoutes(
   });
 
   app.post("/api/inventory/:id/image", requireAuth, requireRole("editor", "admin"), imageUpload.single("image"), async (req, res) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7810/ingest/124a1cb1-6e13-41d5-98f5-ef3dbb7726dd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d2f11e'},body:JSON.stringify({sessionId:'d2f11e',runId:'initial',hypothesisId:'H3',location:'server/routes.ts:1444',message:'inventory image upload route entered',data:{itemId:req.params.id,hasFile:Boolean(req.file),fileMime:req.file?.mimetype ?? null,fileSize:req.file?.size ?? null,userId:Number.isFinite((req as any).user?.id) ? (req as any).user.id : null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     if (!req.file) {
-      return res.status(400).json({ message: "No image file provided" });
+      // #region agent log
+      fetch('http://127.0.0.1:7810/ingest/124a1cb1-6e13-41d5-98f5-ef3dbb7726dd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d2f11e'},body:JSON.stringify({sessionId:'d2f11e',runId:'post-fix',hypothesisId:'H5',location:'server/routes.ts:1446',message:'image upload skipped due to missing file',data:{itemId:req.params.id},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      return res.status(400).json({ message: "No valid image file provided" });
     }
+    await normalizeHeicToJpeg(req.file);
     const id = Number(req.params.id);
     const item = await storage.getItem(id);
     if (!item) {
@@ -1219,12 +1576,17 @@ export async function registerRoutes(
     const imageUrl = `/uploads/${req.file.filename}`;
     // Pre-generate thumbnail so it's ready immediately on the next page load
     ensureThumbnail(req.file.path).catch((err) => console.error("Thumbnail pre-generation failed", { itemId: id }, err));
+    // #region agent log
+    fetch('http://127.0.0.1:7810/ingest/124a1cb1-6e13-41d5-98f5-ef3dbb7726dd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d2f11e'},body:JSON.stringify({sessionId:'d2f11e',runId:'initial',hypothesisId:'H4',location:'server/routes.ts:1457',message:'about to persist attachment',data:{itemId:id,imageUrl,existingPrimaryImage:Boolean(item.imageUrl)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     const attachment = await storage.addAttachment(id, imageUrl);
     const attachments = await storage.getAttachments(id);
-    if (!item.imageUrl) {
-      await db.update(inventoryItems).set({ imageUrl }).where(eq(inventoryItems.id, id));
-    }
+    // Keep list thumbnail in sync with the most recent uploaded image.
+    await db.update(inventoryItems).set({ imageUrl }).where(eq(inventoryItems.id, id));
     const [updated] = await db.select().from(inventoryItems).where(eq(inventoryItems.id, id));
+    // #region agent log
+    fetch('http://127.0.0.1:7810/ingest/124a1cb1-6e13-41d5-98f5-ef3dbb7726dd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d2f11e'},body:JSON.stringify({sessionId:'d2f11e',runId:'initial',hypothesisId:'H4',location:'server/routes.ts:1463',message:'inventory image upload success response',data:{itemId:id,attachmentId:attachment?.id ?? null,attachmentsCount:attachments.length,primaryImageUrl:updated?.imageUrl ?? null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     res.json({ ...updated, attachments });
   });
 

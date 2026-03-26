@@ -5,19 +5,12 @@ Track open work and completed items by version. See `CHANGELOG.md` for full rele
 ---
 ## Open
 ---
-### [Expansion] Add backup restore-verification job
-**What:** Implement automated restore verification (restore backup to temp DB, run integrity checks, publish pass/fail report).
-**Why:** “Backup exists” is insufficient; expansion requires proven recoverability and auditable resilience.
-**Context:** Backup tooling exists but restore confidence must be continuously verified.
-**Effort:** M
-**Priority:** P0
-**Depends on:** Access to isolated restore target and integrity-check scripts.
-
----
 ### [Expansion] Add data-integrity scanner + repair report
 **What:** Add scheduled integrity scans for orphaned files/attachments/history mismatches and generate a read-only repair report.
 **Why:** Prevents silent drift and preserves trust as data volume and team usage scale.
 **Context:** Recent FK/order fixes show integrity guardrails are now a growth-critical capability.
+**Solution** Add a read-only integrity scanner job (script/integrity-scan.ts) that runs on a schedule, checks core drift conditions (orphan attachments/notes/doc links, history foreign-key mismatches, and DB-vs-filesystem file presence gaps), writes a timestamped scan artifact (integrity-scan-<timestamp>.json), generates a separate read-only repair proposal report (repair-report-<timestamp>.md|json with suggested SQL/file actions but no auto-mutation), and emits ops events (job.integrity_scan_success / job.integrity_scan_failure) so results are visible in Ops Health.
+**Done When** Scheduled scans run at least daily and complete without mutating production data; each run stores an auditable scan report with per-check counts and sample affected IDs; a repair report is generated with categorized proposed fixes (safe, needs review, destructive) and no automatic execution; scan pass/fail plus finding severity is emitted to ops_events and visible in Ops dashboard; alerting thresholds flag warning/critical drift; tests cover scanner query correctness, report generation, and failure-path event emission.
 **Effort:** M
 **Priority:** P0
 **Depends on:** Ops dashboard event pipeline for visibility.
@@ -27,6 +20,8 @@ Track open work and completed items by version. See `CHANGELOG.md` for full rele
 **What:** Add explicit “assign asset” and “return asset” actions with required metadata (assignee/date/condition/notes) and normalized audit events.
 **Why:** Moves core usage from ad-hoc edits into structured workflows, increasing product stickiness.
 **Context:** Existing inventory edits are flexible; expansion requires governed lifecycle steps.
+**Solution** Add a first-class assignment workflow by introducing an inventory_assignments transaction table and explicit APIs (POST /api/inventory/:id/assign, POST /api/inventory/:id/return) that enforce role checks and state transitions, require assignment/return metadata (assignee/date/condition/notes), update inventory_items.responsible as the current-holder snapshot, and write normalized audit history events (ASSIGN, RETURN) with actor and timestamps instead of ad-hoc remarks.
+**Done When** Editors/admins can assign and return assets only through dedicated actions; assign is blocked when an active assignment already exists (unless explicit transfer flow), return is blocked when no active assignment exists; required metadata is validated server-side; each action writes auditable ASSIGN/RETURN history records and updates current responsible consistently; UI exposes Assign/Return dialogs with clear status (active vs returned) and item-level assignment timeline; tests cover permission enforcement, transition guards, and happy-path assign/return behavior.
 **Effort:** L
 **Priority:** P1
 **Depends on:** Stable audit/event schema and role checks.
@@ -36,6 +31,8 @@ Track open work and completed items by version. See `CHANGELOG.md` for full rele
 **What:** Add recurring maintenance/calibration schedules, due/overdue states, and completion actions with evidence/notes.
 **Why:** Operational value shifts from static inventory tracking to lifecycle management.
 **Context:** Natural next module after assignment workflow for field/industrial use cases.
+**Solution** Add a first-class maintenance/calibration workflow with a dedicated schedule table and completion log table (e.g., maintenance_schedules, maintenance_events) plus APIs to create recurring plans, compute and expose due/overdue state, and complete runs with required evidence/notes (POST /api/inventory/:id/maintenance/schedule, GET /api/maintenance/due, POST /api/maintenance/:scheduleId/complete); store next due date based on interval rules, support both maintenance and calibration types, write normalized audit/history events (MAINTENANCE_SCHEDULED, MAINTENANCE_COMPLETED, MAINTENANCE_OVERDUE), and surface status + actions in Dashboard with filters for due/overdue.
+**Done When** Editors/admins can create recurring maintenance/calibration schedules per asset with interval and start date; system automatically computes next due and marks items as due/overdue; users can complete a due item only by submitting required completion metadata (performed date, condition/result, notes, optional evidence attachment); completion advances next due correctly for the recurrence rule; audit trail records schedule/create/complete/overdue events with actor and timestamps; UI provides actionable due/overdue views and item-level maintenance history; tests cover recurrence math, due/overdue transitions, permission checks, and completion validation.
 **Effort:** L
 **Priority:** P1
 **Depends on:** Assignment workflow and notification/alerting hooks.
@@ -45,24 +42,19 @@ Track open work and completed items by version. See `CHANGELOG.md` for full rele
 **What:** Build due-soon/overdue/critical queues for employee documents with escalation rules by role.
 **Why:** Converts compliance risk from reactive to proactive, a key expansion differentiator.
 **Context:** Document tracking exists; this adds operational workflows and accountability.
+**Solution**
+**Done When**
 **Effort:** M
 **Priority:** P1
 **Depends on:** Alerting primitives and employee-document data completeness.
-
----
-### [Expansion] Add guarded bulk operations + short undo window
-**What:** Implement safe bulk actions (archive/reassign/status update) with confirmation and short-lived undo support for destructive operations.
-**Why:** Improves team throughput while reducing operational mistakes in larger datasets.
-**Context:** Current flows optimize correctness per item; expansion needs safe scale operations.
-**Effort:** M
-**Priority:** P1
-**Depends on:** Consistent audit recording and reversible action model.
 
 ---
 ### [Expansion] Introduce site/location data model foundations
 **What:** Add site/location primitives and scope inventory/doc/workflow records to location context (feature-flagged rollout).
 **Why:** Enables multi-site expansion without disruptive schema rewrite later.
 **Context:** Current model is effectively single-site; this is a 6-12 month scalability prerequisite.
+**Solution**
+**Done When**
 **Effort:** L
 **Priority:** P2
 **Depends on:** Agreement on tenancy/scoping model and migration plan.
@@ -72,6 +64,8 @@ Track open work and completed items by version. See `CHANGELOG.md` for full rele
 **What:** Add reusable role templates and enforce location-scoped permissions at API boundaries.
 **Why:** Reduces onboarding friction and avoids per-customer permission customization debt.
 **Context:** Role model exists globally; expansion requires scoped authorization patterns.
+**Solution**
+**Done When**
 **Effort:** L
 **Priority:** P2
 **Depends on:** Site/location model implementation.
@@ -81,6 +75,8 @@ Track open work and completed items by version. See `CHANGELOG.md` for full rele
 **What:** Add webhook events for core lifecycle changes (inventory CRUD, assignment events, compliance alerts) with retries and idempotency.
 **Why:** Integration readiness is required for expansion into larger teams and connected systems.
 **Context:** Enables ecosystem workflows without tight coupling to specific third-party systems.
+**Solution**
+**Done When**
 **Effort:** M
 **Priority:** P2
 **Depends on:** Stable event contracts and observability for delivery failures.
@@ -90,12 +86,43 @@ Track open work and completed items by version. See `CHANGELOG.md` for full rele
 **What:** Ship vertical starter templates and an executive summary report (asset health, risk, compliance posture).
 **Why:** Improves time-to-value and supports go-to-market expansion beyond technical users.
 **Context:** Product foundation is maturing; packaging is required for repeatable onboarding.
+**Solution**
+**Done When**
 **Effort:** M
 **Priority:** P2
 **Depends on:** Workflow modules and site-scoped data model stability.
 
+---
+### [Note] Add restore-verification KPI card to Ops Health
+**What:** Add a KPI card for restore-verification success rate (7d) and include related pass/fail counts.
+**Why:** Makes backup recoverability confidence visible at a glance in the dashboard summary.
+**Context:** Restore verification job and events already exist (`job.backup_restore_verify_success`/`failure`); this is observability polish.
+**Solution**
+**Done When**
+**Effort:** S
+**Priority:** P2
+**Depends on:** Extending ops summary query and Ops Health KPI cards.
+
 ## Completed
 ---
+### [Expansion] Add guarded bulk operations + short undo window (2026-03-26)
+**What:** Implemented guarded bulk actions (status/reassign/archive/delete) with confirmation and short-lived undo for destructive bulk delete.
+**Why:** Improves team throughput while reducing operational mistakes at larger scale.
+**Context:** Added backend bulk endpoints (`/api/inventory/bulk/update`, `/bulk/archive`, `/bulk/delete`, `/bulk/undo`), undo snapshot persistence (`inventory_bulk_undo` + migration), and Dashboard bulk action summary prompts plus undo banner.
+**Effort:** M
+**Priority:** P1
+**Depends on:** Consistent audit recording and reversible action model.
+**Completed:** 2026-03-26
+
+### [Expansion] Add backup restore-verification job (2026-03-26)
+**What:** Implemented automated restore verification to prove recoverability continuously.
+**Why:** “Backup exists” alone is not enough for resilience and auditability.
+**Context:** Added `script/backup-restore-verify.ts`, `script/backup-restore-verify-scheduled.bat`, and npm script `backup:verify-restore`; wired pass/fail events to `ops_events` and documented operational steps.
+**Effort:** M
+**Priority:** P0
+**Depends on:** Access to isolated restore target and integrity-check scripts.
+**Completed:** 2026-03-26
+
 ### Build Operations Health Dashboard (control tower) (2026-03-20)
 **What:** Internal Ops Health dashboard: `ops_events` storage, KPI/event taxonomy, server instrumentation (auth, API errors/slow requests, import/history/thumbnail, backup script), and `/ops-health` page (editor/admin) with summary + event feed.
 **Why:** Operators need one place to detect failures quickly and reduce mean time to detect incidents.

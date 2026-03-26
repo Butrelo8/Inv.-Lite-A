@@ -512,18 +512,36 @@ export class DatabaseStorage implements IStorage {
     endpoint?: string | null;
     method?: string | null;
   }): Promise<void> {
-    await db.insert(opsEvents).values({
-      eventType: record.eventType,
-      severity: record.severity,
-      source: record.source,
-      environment: record.environment,
-      payload: record.payload ?? {},
-      userId: record.userId ?? null,
-      ip: record.ip ?? null,
-      requestId: record.requestId ?? null,
-      endpoint: record.endpoint ?? null,
-      method: record.method ?? null,
-    });
+    try {
+      // #region agent log
+      fetch('http://127.0.0.1:7810/ingest/124a1cb1-6e13-41d5-98f5-ef3dbb7726dd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d2f11e'},body:JSON.stringify({sessionId:'d2f11e',runId:'initial',hypothesisId:'H2',location:'server/storage.ts:515',message:'addOpsEvent insert attempt',data:{eventType:record.eventType,severity:record.severity,environment:record.environment},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      await db.insert(opsEvents).values({
+        eventType: record.eventType,
+        severity: record.severity,
+        source: record.source,
+        environment: record.environment,
+        payload: record.payload ?? {},
+        userId: record.userId ?? null,
+        ip: record.ip ?? null,
+        requestId: record.requestId ?? null,
+        endpoint: record.endpoint ?? null,
+        method: record.method ?? null,
+      });
+      // #region agent log
+      fetch('http://127.0.0.1:7810/ingest/124a1cb1-6e13-41d5-98f5-ef3dbb7726dd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d2f11e'},body:JSON.stringify({sessionId:'d2f11e',runId:'initial',hypothesisId:'H2',location:'server/storage.ts:528',message:'addOpsEvent insert success',data:{eventType:record.eventType},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+    } catch (err) {
+      // #region agent log
+      fetch('http://127.0.0.1:7810/ingest/124a1cb1-6e13-41d5-98f5-ef3dbb7726dd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d2f11e'},body:JSON.stringify({sessionId:'d2f11e',runId:'initial',hypothesisId:'H2',location:'server/storage.ts:531',message:'addOpsEvent insert failed',data:{eventType:record.eventType,error:err instanceof Error ? err.message : String(err)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      const code = (err as { code?: string } | null)?.code;
+      if (code === "42P01") {
+        // ops_events table may be absent before migrations are applied; observability must stay best-effort.
+        return;
+      }
+      throw err;
+    }
   }
 
   async getOpsEventFeed(limit = 100, severity?: OpsEventSeverity): Promise<(typeof opsEvents.$inferSelect)[]> {
@@ -543,7 +561,7 @@ export class DatabaseStorage implements IStorage {
     const last24h = new Date(now.getTime() - 24 * 60 * 60_000);
     const last7d = new Date(now.getTime() - 7 * 24 * 60 * 60_000);
 
-    const [alertsRows, apiRows24h, authFailures24hRows, rateHits24hRows, csrf24hRows, importRows24h, backupRows7d, historyFailRows24h] = await Promise.all([
+    const [alertsRows, apiRows24h, authFailures24hRows, rateHits24hRows, csrf24hRows, importRows24h, backupRows7d, integrityRows7d, lastIntegrityRunRows, historyFailRows24h] = await Promise.all([
       db
         .select({
           severity: opsEvents.severity,
@@ -591,6 +609,17 @@ export class DatabaseStorage implements IStorage {
         .where(and(gt(opsEvents.createdAt, last7d), inArray(opsEvents.eventType, ["job.backup_success", "job.backup_failure"])))
         .groupBy(opsEvents.eventType),
       db
+        .select({ eventType: opsEvents.eventType, total: count() })
+        .from(opsEvents)
+        .where(and(gt(opsEvents.createdAt, last7d), inArray(opsEvents.eventType, ["job.integrity_scan_success", "job.integrity_scan_failure"])))
+        .groupBy(opsEvents.eventType),
+      db
+        .select({ eventType: opsEvents.eventType, payload: opsEvents.payload })
+        .from(opsEvents)
+        .where(inArray(opsEvents.eventType, ["job.integrity_scan_success", "job.integrity_scan_failure"]))
+        .orderBy(desc(opsEvents.createdAt))
+        .limit(1),
+      db
         .select({ total: count() })
         .from(opsEvents)
         .where(and(gt(opsEvents.createdAt, last24h), eq(opsEvents.eventType, "job.history_write_failure"))),
@@ -634,6 +663,14 @@ export class DatabaseStorage implements IStorage {
     const backupFailure7d = Number(backupRows7d.find((r) => r.eventType === "job.backup_failure")?.total ?? 0);
     const backupTotal7d = backupSuccess7d + backupFailure7d;
     const backupSuccessRate7d = backupTotal7d > 0 ? backupSuccess7d / backupTotal7d : null;
+    const integritySuccess7d = Number(integrityRows7d.find((r) => r.eventType === "job.integrity_scan_success")?.total ?? 0);
+    const integrityFailure7d = Number(integrityRows7d.find((r) => r.eventType === "job.integrity_scan_failure")?.total ?? 0);
+    const integrityTotal7d = integritySuccess7d + integrityFailure7d;
+    const integrityScanSuccessRate7d = integrityTotal7d > 0 ? integritySuccess7d / integrityTotal7d : null;
+    const lastIntegrityPayload = (lastIntegrityRunRows?.[0]?.payload ?? {}) as Record<string, unknown>;
+    const integrityScanIssuesLastRun = lastIntegrityRunRows.length > 0
+      ? Number.isFinite(Number(lastIntegrityPayload.totalIssues)) ? Number(lastIntegrityPayload.totalIssues) : null
+      : null;
 
     const historyWriteFailures24h = Number(historyFailRows24h?.[0]?.total ?? 0);
     const historyWritesApprox24h = Math.max(1, historyWriteFailures24h);
@@ -663,6 +700,8 @@ export class DatabaseStorage implements IStorage {
         rateLimitHits24h,
         csrfBlocks24h,
         backupSuccessRate7d,
+        integrityScanSuccessRate7d,
+        integrityScanIssuesLastRun,
         historyWriteSuccessRate24h,
         p95ApiLatencyMs24h,
         activeSessions,

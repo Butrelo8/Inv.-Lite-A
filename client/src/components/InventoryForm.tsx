@@ -58,6 +58,30 @@ function thumbUrl(imageUrl: string | null | undefined): string | undefined {
   return `/uploads/thumbs/${filename}.webp`;
 }
 
+const FALLBACK_THUMB_PLACEHOLDER =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80">' +
+      '<rect width="80" height="80" fill="#f1f5f9"/>' +
+      '<path d="M16 56l14-14 10 10 10-12 14 16H16z" fill="#cbd5e1"/>' +
+      '<circle cx="30" cy="28" r="6" fill="#cbd5e1"/>' +
+      '<circle cx="64" cy="16" r="10" fill="#f59e0b"/>' +
+      '<rect x="63" y="10" width="2" height="8" rx="1" fill="#ffffff"/>' +
+      '<circle cx="64" cy="21" r="1.3" fill="#ffffff"/>' +
+    "</svg>"
+  );
+
+function fallbackImageSrc(el: HTMLImageElement, originalUrl: string | null | undefined) {
+  if (!el.dataset.fallbackTried) {
+    el.dataset.fallbackTried = "original";
+    if (originalUrl) {
+      el.src = originalUrl;
+      return;
+    }
+  }
+  el.src = FALLBACK_THUMB_PLACEHOLDER;
+}
+
 // Extend schema to handle form string inputs that need coercion
 const formSchema = insertInventoryItemSchema.extend({
   units: z.coerce.number().min(0),
@@ -643,7 +667,7 @@ export function InventoryForm({ defaultValues, onSubmit, isSubmitting, onCancel 
                         loading="lazy"
                         decoding="async"
                         className="w-full h-full object-cover"
-                        onError={(e) => { (e.currentTarget as HTMLImageElement).src = a.imageUrl ?? ""; }}
+                        onError={(e) => fallbackImageSrc(e.currentTarget, a.imageUrl)}
                       />
                     </button>
                     <Button

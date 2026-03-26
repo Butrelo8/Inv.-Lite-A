@@ -14,7 +14,9 @@
     "bulk-import-images": "tsx script/bulk-import-images.ts",
     "convert-heic": "tsx script/convert-heic-to-jpg.ts",
     "create-user": "tsx script/create-user.ts",
-    "backup": "tsx script/backup.ts"
+    "backup": "tsx script/backup.ts",
+    "backup:verify-restore": "tsx script/backup-restore-verify.ts",
+    "integrity:scan": "tsx script/integrity-scan.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

@@ -13,6 +13,10 @@ export interface HistoryEntry {
   productName?: string | null;
   userName?: string | null;
   companyName?: string | null;
+  undoToken?: string | null;
+  undoExpiresAt?: string | null;
+  canRevert?: boolean;
+  revertKind?: "single_delete" | "bulk_delete" | null;
 }
 
 export interface HistoryFilters {

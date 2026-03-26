@@ -67,10 +67,37 @@ export function configureAuth(app: Express) {
       .then(() =>
         pool.query(
           `
-          ALTER TABLE user_sessions
-          ADD CONSTRAINT user_sessions_pkey PRIMARY KEY (sid)
+          DO $$
+          DECLARE
+            existing_pk_name text;
+            existing_pk_is_sid boolean;
+          BEGIN
+            SELECT c.conname,
+                   EXISTS (
+                     SELECT 1
+                     FROM unnest(c.conkey) AS k(attnum)
+                     JOIN pg_attribute a
+                       ON a.attrelid = c.conrelid
+                      AND a.attnum = k.attnum
+                     WHERE a.attname = 'sid'
+                   ) AND array_length(c.conkey, 1) = 1
+            INTO existing_pk_name, existing_pk_is_sid
+            FROM pg_constraint c
+            WHERE c.conrelid = 'user_sessions'::regclass
+              AND c.contype = 'p'
+            LIMIT 1;
+
+            IF existing_pk_name IS NULL THEN
+              ALTER TABLE user_sessions
+              ADD CONSTRAINT user_sessions_pkey PRIMARY KEY (sid);
+            ELSIF NOT existing_pk_is_sid THEN
+              EXECUTE format('ALTER TABLE user_sessions DROP CONSTRAINT %I', existing_pk_name);
+              ALTER TABLE user_sessions
+              ADD CONSTRAINT user_sessions_pkey PRIMARY KEY (sid);
+            END IF;
+          END $$;
           `,
-        ).catch(() => undefined),
+        ),
       )
       .then(() =>
         pool.query(

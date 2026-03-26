@@ -97,3 +97,65 @@ If the app runs in Docker with a named volume, copy into the volume (e.g. `docke
 
 - `script/backup.ts` — backup implementation and env vars (`POSTGRES_CONTAINER`, `DATABASE_URL`, `BACKUP_DIR`, etc.)
 - `.env.example` — backup-related variables
+
+---
+
+## Automated restore verification
+
+Use `npm run backup:verify-restore` to continuously prove recoverability.
+
+What the job does:
+
+1. Selects the latest backup artifact in `BACKUP_DIR`.
+2. Extracts it (if archive) and validates `database.dump` readability via `pg_restore --list`.
+3. Creates an isolated temporary database.
+4. Restores `database.dump` into that temporary database.
+5. Runs integrity checks (required tables, orphan checks, readable row counts).
+6. Emits pass/fail to `ops_events`:
+   - `job.backup_restore_verify_success` (severity `info`)
+   - `job.backup_restore_verify_failure` (severity `critical`)
+7. Writes a JSON report in `BACKUP_DIR`:
+   - `restore-verify-report-<timestamp>.json`
+8. Drops the temporary database and cleans temp extraction files.
+
+Recommended schedule:
+
+- Run backup first (`npm run backup`).
+- Run restore verification 30-60 minutes later.
+- Keep restore verification at least daily.
+
+Optional env flags:
+
+- `BACKUP_VERIFY_SKIP_UPLOADS_CHECK=true` to skip checking artifact `uploads/` presence.
+- `PG_RESTORE_PATH=<path>` if `pg_restore` is not discoverable in PATH.
+
+---
+
+## Data integrity scanner (read-only)
+
+Use `npm run integrity:scan` to detect data/file drift and generate a repair proposal.
+
+What the job does:
+
+1. Checks for orphan rows and reference drift:
+   - `inventory_attachments.item_id` -> `inventory_items.id`
+   - `shared_notes.item_id` -> `inventory_items.id`
+   - `employee_documents.item_id` -> `inventory_items.id`
+   - `inventory_history` product/user/company FK drift
+2. Checks DB-referenced files that are missing from local storage.
+3. Writes scan artifact:
+   - `integrity-scan-<timestamp>.json`
+4. Writes read-only repair proposal:
+   - `repair-report-<timestamp>.md`
+5. Emits ops events:
+   - `job.integrity_scan_success`
+   - `job.integrity_scan_failure`
+
+Default output location:
+
+- `reports/integrity/` under repository root (override with `INTEGRITY_REPORT_DIR`).
+
+Optional env flags:
+
+- `INTEGRITY_REPORT_DIR=<path>` for custom report output folder.
+- `INTEGRITY_SAMPLE_LIMIT=25` to control max sample rows captured per check.

@@ -13,6 +13,10 @@ export const OPS_EVENT_TYPES = [
   "api.slow_request",
   "job.backup_success",
   "job.backup_failure",
+  "job.backup_restore_verify_success",
+  "job.backup_restore_verify_failure",
+  "job.integrity_scan_success",
+  "job.integrity_scan_failure",
   "job.import_success",
   "job.import_failure",
   "job.history_write_failure",
@@ -41,6 +45,8 @@ export interface OpsSummaryResponse {
     rateLimitHits24h: number;
     csrfBlocks24h: number;
     backupSuccessRate7d: number | null;
+    integrityScanSuccessRate7d: number | null;
+    integrityScanIssuesLastRun: number | null;
     historyWriteSuccessRate24h: number;
     p95ApiLatencyMs24h: number | null;
     activeSessions: number | null;

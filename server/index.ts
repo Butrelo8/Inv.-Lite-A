@@ -7,7 +7,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { ensureThumbsDir } from "./thumbnails";
-import { emitOpsEvent } from "./ops-events";
+import { emitOpsEvent, ensureOpsEventsTable } from "./ops-events";
 
 const app = express();
 const SLOW_REQUEST_MS = parseInt(process.env.OPS_SLOW_REQUEST_MS || "1000", 10);
@@ -116,6 +116,12 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  try {
+    await ensureOpsEventsTable();
+  } catch (err) {
+    console.error("Failed to ensure ops_events table exists", err);
+  }
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
