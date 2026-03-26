@@ -141,6 +141,24 @@ export const opsEvents = pgTable(
   })
 );
 
+export const inventoryBulkUndo = pgTable(
+  "inventory_bulk_undo",
+  {
+    id: serial("id").primaryKey(),
+    token: text("token").notNull().unique(),
+    actionType: text("action_type").notNull(),
+    payload: jsonb("payload").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdByUserId: integer("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    tokenIdx: index("inventory_bulk_undo_token_idx").on(table.token),
+    expiresAtIdx: index("inventory_bulk_undo_expires_at_idx").on(table.expiresAt),
+  })
+);
+
 export type InventoryItem = typeof inventoryItems.$inferSelect;
 export type InventoryAttachment = typeof inventoryAttachments.$inferSelect;
 export type InsertInventoryItem = z.infer<typeof insertInventoryItemSchema>;

@@ -25,6 +25,18 @@ async function ensureDeleteHistorySchema(): Promise<void> {
       );
     `);
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS inventory_bulk_undo (
+        id serial PRIMARY KEY,
+        token text NOT NULL UNIQUE,
+        action_type text NOT NULL,
+        payload jsonb NOT NULL,
+        expires_at timestamptz NOT NULL,
+        consumed_at timestamptz,
+        created_by_user_id integer REFERENCES users(id) ON DELETE SET NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+    `);
+    await pool.query(`
       INSERT INTO users (id, username, password_hash, role, created_at)
       VALUES (1, 'test-user', 'test-hash', 'admin', NOW())
       ON CONFLICT (id) DO NOTHING;
@@ -99,7 +111,7 @@ test("inventory delete: writes DELETE history before item deletion", async () =>
         "Sec-Fetch-Site": "same-origin",
       },
     });
-    assert.equal(resp.status, 204);
+    assert.equal(resp.status, 200);
   } finally {
     httpServer.close();
   }

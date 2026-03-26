@@ -72,6 +72,30 @@ function thumbUrl(imageUrl: string | null | undefined): string | undefined {
   return `/uploads/thumbs/${filename}.webp`;
 }
 
+const FALLBACK_THUMB_PLACEHOLDER =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80">' +
+      '<rect width="80" height="80" fill="#f1f5f9"/>' +
+      '<path d="M16 56l14-14 10 10 10-12 14 16H16z" fill="#cbd5e1"/>' +
+      '<circle cx="30" cy="28" r="6" fill="#cbd5e1"/>' +
+      '<circle cx="64" cy="16" r="10" fill="#f59e0b"/>' +
+      '<rect x="63" y="10" width="2" height="8" rx="1" fill="#ffffff"/>' +
+      '<circle cx="64" cy="21" r="1.3" fill="#ffffff"/>' +
+    "</svg>"
+  );
+
+function fallbackImageSrc(el: HTMLImageElement, originalUrl: string | null | undefined) {
+  if (!el.dataset.fallbackTried) {
+    el.dataset.fallbackTried = "original";
+    if (originalUrl) {
+      el.src = originalUrl;
+      return;
+    }
+  }
+  el.src = FALLBACK_THUMB_PLACEHOLDER;
+}
+
 type SortableColumn = "code" | "name" | "category" | "responsible" | "company" | "condition" | "units" | "date";
 const SORTABLE_COLUMNS: { id: SortableColumn; label: string }[] = [
   { id: "code", label: "Código" },
@@ -162,6 +186,8 @@ export default function Dashboard() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkDuplicateOpen, setBulkDuplicateOpen] = useState(false);
   const [bulkDuplicating, setBulkDuplicating] = useState(false);
+  const [bulkUpdating, setBulkUpdating] = useState(false);
+  const [lastBulkUndo, setLastBulkUndo] = useState<{ token: string; expiresAt: string; deleted: number } | null>(null);
 
   const debouncedSearch = useDebounce(search, 300);
 
@@ -246,6 +272,17 @@ export default function Dashboard() {
   useEffect(() => {
     setPage(1);
   }, [debouncedSearch, category, responsible, companyId, datePreset, recentPreset]);
+
+  useEffect(() => {
+    if (!lastBulkUndo) return;
+    const ms = new Date(lastBulkUndo.expiresAt).getTime() - Date.now();
+    if (ms <= 0) {
+      setLastBulkUndo(null);
+      return;
+    }
+    const t = window.setTimeout(() => setLastBulkUndo(null), ms + 200);
+    return () => window.clearTimeout(t);
+  }, [lastBulkUndo]);
 
   const { data: filterOptions = { categories: [], responsible: [], companies: [] } } = useFilterOptions();
   const companiesById = useMemo(() => {
@@ -504,52 +541,44 @@ export default function Dashboard() {
     if (!canEdit) return;
     const ids = selectedIdsArray;
     if (ids.length === 0) return;
+    const preview = ids
+      .slice(0, 5)
+      .map((id) => {
+        const details = selectedItemsDetails.get(id);
+        return details ? `${details.code} - ${details.name}` : `#${id}`;
+      })
+      .join("\n");
+    const more = ids.length > 5 ? `\n...y ${ids.length - 5} más` : "";
+    const proceed = window.confirm(`Eliminar ${ids.length} artículo(s)?\n\n${preview}${more}\n\nPodrás deshacer por tiempo limitado.`);
+    if (!proceed) return;
+    const reasonInput = window.prompt("Motivo de la eliminación masiva (opcional):", "");
+    if (reasonInput === null) return;
+    const reason = reasonInput.trim() || undefined;
 
     setBulkDeleteOpen(false);
     setBulkDeleting(true);
 
-    const total = ids.length;
     try {
-      flushSync(() => {
-        setLoadingOverlay({
-          open: true,
-          title: "Eliminando artículos",
-          message: `Eliminando 1 de ${total}...`,
-          progress: 0,
-        });
+      flushSync(() => setLoadingOverlay({ open: true, title: "Eliminando artículos", message: "Procesando...", progress: 30 }));
+      const res = await fetch("/api/inventory/bulk/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ids, reason }),
       });
-      // Let the overlay render before starting the loop.
-      await new Promise((r) => requestAnimationFrame(r));
-
-      for (let i = 0; i < ids.length; i++) {
-        const id = ids[i];
-        const url = buildUrl(api.inventory.delete.path, { id });
-        const res = await fetch(url, {
-          method: api.inventory.delete.method,
-          credentials: "include",
-        });
-
-        if (!res.ok && res.status !== 404) {
-          const text = await res.text().catch(() => "");
-          throw new Error(`No se pudo eliminar el artículo #${id}${text ? `: ${text}` : ""}`);
-        }
-
-        const completed = i + 1;
-        const pct = (completed / total) * 100;
-        setLoadingOverlay((prev) => ({
-          ...prev,
-          progress: pct,
-          message: `Eliminando ${completed} de ${total}...`,
-        }));
-      }
+      const data = await res.json().catch(() => ({})) as { deleted?: number; undoToken?: string | null; undoExpiresAt?: string | null; message?: string };
+      if (!res.ok) throw new Error(data.message || "No se pudo eliminar la selección.");
 
       queryClient.invalidateQueries({ queryKey: [api.inventory.list.path] });
       queryClient.invalidateQueries({ queryKey: ["/api/history"] });
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/filters"] });
 
+      if (data.undoToken && data.undoExpiresAt) {
+        setLastBulkUndo({ token: data.undoToken, expiresAt: data.undoExpiresAt, deleted: Number(data.deleted ?? ids.length) });
+      }
       toast({
         title: "Éxito",
-        description: `Se eliminaron ${total} artículo${total !== 1 ? "s" : ""}.`,
+        description: `Se eliminaron ${Number(data.deleted ?? ids.length)} artículo${Number(data.deleted ?? ids.length) !== 1 ? "s" : ""}.`,
       });
       clearSelection();
     } catch (err: any) {
@@ -561,6 +590,109 @@ export default function Dashboard() {
     } finally {
       setBulkDeleting(false);
       setLoadingOverlay((prev) => ({ ...prev, open: false }));
+    }
+  };
+
+  const handleBulkUpdate = async (updates: { condition?: string; responsible?: string | null }, successText: string) => {
+    if (!canEdit) return;
+    const ids = selectedIdsArray;
+    if (ids.length === 0) return;
+    const preview = ids
+      .slice(0, 5)
+      .map((id) => {
+        const details = selectedItemsDetails.get(id);
+        return details ? `${details.code} - ${details.name}` : `#${id}`;
+      })
+      .join("\n");
+    const more = ids.length > 5 ? `\n...y ${ids.length - 5} más` : "";
+    const proceed = window.confirm(`${successText} en ${ids.length} artículo(s)?\n\n${preview}${more}`);
+    if (!proceed) return;
+    const reasonInput = window.prompt("Motivo del cambio masivo (opcional):", "");
+    if (reasonInput === null) return;
+    const reason = reasonInput.trim() || undefined;
+    setBulkUpdating(true);
+    try {
+      const res = await fetch("/api/inventory/bulk/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ids, updates, reason }),
+      });
+      const data = await res.json().catch(() => ({})) as { updated?: number; message?: string };
+      if (!res.ok) throw new Error(data.message || "No se pudo aplicar acción masiva");
+      queryClient.invalidateQueries({ queryKey: [api.inventory.list.path] });
+      queryClient.invalidateQueries({ queryKey: ["/api/history"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inventory/filters"] });
+      toast({ title: "Éxito", description: `${successText} (${Number(data.updated ?? ids.length)}).` });
+      clearSelection();
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message || "Error en acción masiva", variant: "destructive" });
+    } finally {
+      setBulkUpdating(false);
+    }
+  };
+
+  const handleBulkArchive = async () => {
+    if (!canEdit) return;
+    const ids = selectedIdsArray;
+    if (ids.length === 0) return;
+    const preview = ids
+      .slice(0, 5)
+      .map((id) => {
+        const details = selectedItemsDetails.get(id);
+        return details ? `${details.code} - ${details.name}` : `#${id}`;
+      })
+      .join("\n");
+    const more = ids.length > 5 ? `\n...y ${ids.length - 5} más` : "";
+    const proceed = window.confirm(`Archivar ${ids.length} artículo(s)?\n\n${preview}${more}`);
+    if (!proceed) return;
+    const reasonInput = window.prompt("Motivo del archivado masivo (opcional):", "");
+    if (reasonInput === null) return;
+    const reason = reasonInput.trim() || undefined;
+    setBulkUpdating(true);
+    try {
+      const res = await fetch("/api/inventory/bulk/archive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ids, reason }),
+      });
+      const data = await res.json().catch(() => ({})) as { archived?: number; message?: string };
+      if (!res.ok) throw new Error(data.message || "No se pudo archivar la selección");
+      queryClient.invalidateQueries({ queryKey: [api.inventory.list.path] });
+      queryClient.invalidateQueries({ queryKey: ["/api/history"] });
+      toast({ title: "Éxito", description: `Se archivaron ${Number(data.archived ?? ids.length)} artículo(s).` });
+      clearSelection();
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message || "Error en archivado masivo", variant: "destructive" });
+    } finally {
+      setBulkUpdating(false);
+    }
+  };
+
+  const handleUndoBulkDelete = async () => {
+    if (!lastBulkUndo) return;
+    if (new Date(lastBulkUndo.expiresAt).getTime() < Date.now()) {
+      setLastBulkUndo(null);
+      toast({ title: "Undo expirado", description: "La ventana para deshacer ya expiró.", variant: "destructive" });
+      return;
+    }
+    try {
+      const res = await fetch("/api/inventory/bulk/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ undoToken: lastBulkUndo.token }),
+      });
+      const data = await res.json().catch(() => ({})) as { restored?: number; message?: string };
+      if (!res.ok) throw new Error(data.message || "No se pudo deshacer");
+      queryClient.invalidateQueries({ queryKey: [api.inventory.list.path] });
+      queryClient.invalidateQueries({ queryKey: ["/api/history"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inventory/filters"] });
+      toast({ title: "Deshecho", description: `Se restauraron ${Number(data.restored ?? lastBulkUndo.deleted)} artículo(s).` });
+      setLastBulkUndo(null);
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message || "No se pudo deshacer la eliminación", variant: "destructive" });
     }
   };
 
@@ -919,8 +1051,46 @@ export default function Dashboard() {
                       variant="outline"
                       size="sm"
                       className="h-8"
+                      onClick={async () => {
+                        const value = window.prompt("Nuevo estado/condición para la selección:", "Good");
+                        if (value == null) return;
+                        const next = value.trim();
+                        if (!next) return;
+                        await handleBulkUpdate({ condition: next }, "Estado actualizado");
+                      }}
+                      disabled={loadingOverlay.open || bulkDuplicating || bulkDeleting || bulkUpdating}
+                    >
+                      Estado
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8"
+                      onClick={async () => {
+                        const value = window.prompt("Nuevo responsable (vacío para Equipo de trabajo):", "");
+                        if (value == null) return;
+                        const next = value.trim();
+                        await handleBulkUpdate({ responsible: next || "Equipo de trabajo" }, "Responsable actualizado");
+                      }}
+                      disabled={loadingOverlay.open || bulkDuplicating || bulkDeleting || bulkUpdating}
+                    >
+                      Reasignar
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8"
+                      onClick={handleBulkArchive}
+                      disabled={loadingOverlay.open || bulkDuplicating || bulkDeleting || bulkUpdating}
+                    >
+                      Archivar
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8"
                       onClick={() => setBulkDuplicateOpen(true)}
-                      disabled={loadingOverlay.open || bulkDuplicating || bulkDeleting}
+                      disabled={loadingOverlay.open || bulkDuplicating || bulkDeleting || bulkUpdating}
                     >
                       <Copy className="w-4 h-4 mr-2" />
                       Duplicar
@@ -930,7 +1100,7 @@ export default function Dashboard() {
                       size="sm"
                       className="h-8 border-destructive text-destructive hover:bg-destructive/10"
                       onClick={() => setBulkDeleteOpen(true)}
-                      disabled={loadingOverlay.open || bulkDuplicating || bulkDeleting}
+                      disabled={loadingOverlay.open || bulkDuplicating || bulkDeleting || bulkUpdating}
                     >
                       <Trash2 className="w-4 h-4 mr-2" />
                       Eliminar
@@ -969,6 +1139,16 @@ export default function Dashboard() {
                 </div>
               </ScrollArea>
             </div>
+          </div>
+        )}
+        {lastBulkUndo && (
+          <div className="rounded-lg border border-amber-300/40 bg-amber-500/10 px-3 py-2 text-sm flex flex-wrap items-center justify-between gap-2">
+            <span>
+              Se eliminaron {lastBulkUndo.deleted} artículo(s). Puedes deshacer hasta {new Date(lastBulkUndo.expiresAt).toLocaleTimeString()}.
+            </span>
+            <Button variant="outline" size="sm" onClick={handleUndoBulkDelete}>
+              Deshacer eliminación
+            </Button>
           </div>
         )}
       </div>
@@ -1130,7 +1310,7 @@ export default function Dashboard() {
                             loading="lazy"
                             decoding="async"
                             className="w-full h-full object-cover"
-                            onError={(e) => { (e.currentTarget as HTMLImageElement).src = item.imageUrl ?? ""; }}
+                            onError={(e) => fallbackImageSrc(e.currentTarget, item.imageUrl)}
                           />
                         </button>
                       ) : (

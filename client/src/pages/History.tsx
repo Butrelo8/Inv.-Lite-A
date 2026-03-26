@@ -54,7 +54,9 @@ export default function History() {
     filters.search
   );
 
-  const { data, isLoading } = useHistory(filters);
+  const { data, isLoading, refetch } = useHistory(filters);
+  const [revertingId, setRevertingId] = useState<number | null>(null);
+  const [revertError, setRevertError] = useState<string>("");
   const entries = data?.entries ?? [];
   const totalEntries = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalEntries / HISTORY_PAGE_SIZE));
@@ -66,6 +68,32 @@ export default function History() {
   useEffect(() => {
     setPage(1);
   }, [transactionType, userId, dateFrom, dateTo, search]);
+
+  const handleRevert = async (entryId: number) => {
+    if (!window.confirm("Do you want to revert this delete entry?")) return;
+    setRevertError("");
+    setRevertingId(entryId);
+    try {
+      const res = await fetch(`/api/history/${entryId}/revert`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "Sec-Fetch-Site": "same-origin",
+        },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null) as { message?: string } | null;
+        throw new Error(payload?.message || "Failed to revert");
+      }
+      await refetch();
+    } catch (err) {
+      setRevertError(err instanceof Error ? err.message : "Failed to revert");
+    } finally {
+      setRevertingId(null);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -95,6 +123,9 @@ export default function History() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {revertError ? (
+            <p className="text-sm text-destructive">{revertError}</p>
+          ) : null}
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-muted-foreground">Tipo</label>
@@ -185,6 +216,7 @@ export default function History() {
                     <TableHead className="min-w-[90px]">Usuario</TableHead>
                     <TableHead className="min-w-[130px]">Fecha</TableHead>
                     <TableHead>Observaciones</TableHead>
+                    <TableHead className="w-[120px] text-right">Accion</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -209,6 +241,20 @@ export default function History() {
                         </TableCell>
                         <TableCell className="max-w-[180px] truncate text-muted-foreground" title={entry.remarks ?? ""}>
                           {entry.remarks ?? "—"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {entry.canRevert ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void handleRevert(entry.id)}
+                              disabled={revertingId === entry.id}
+                            >
+                              {revertingId === entry.id ? "Revirtiendo..." : "Revertir"}
+                            </Button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                       </TableRow>
                     );

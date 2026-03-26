@@ -40,6 +40,12 @@ AVAILABLE COMMANDS (npm run)
   npm run backup
       Backup PostgreSQL database and uploads folder to backups/.
 
+  npm run backup:verify-restore
+      Restore latest backup into temporary DB, run integrity checks, emit pass/fail.
+
+  npm run integrity:scan
+      Run read-only integrity scanner and generate scan/repair reports.
+
   npm run bulk-import-images -- <folder_path> [base_url]
       Bulk import images from a folder, matching by filename.
       Example: npm run bulk-import-images -- "Copia de Inventario" http://localhost:5000
@@ -461,6 +467,34 @@ To set the time to 9:00 PM:
 Linux/Mac – cron (9:00 PM daily):
    crontab -e
    Add:  0 21 * * * cd /path/to/inventario && npm run backup
+
+RESTORE VERIFICATION (RECOMMENDED DAILY):
+
+Run after backup to prove recoverability (example: 10:00 PM if backup is 9:00 PM):
+
+Windows – Task Scheduler:
+1. Create a second task named "Inventario Restore Verify".
+2. Program:  E:\Cursor Projects\Inventario Lite A\script\backup-restore-verify-scheduled.bat
+3. Set daily trigger after backup.
+
+Linux/Mac – cron (10:00 PM daily):
+   0 22 * * * cd /path/to/inventario && npm run backup:verify-restore
+
+DATA INTEGRITY SCAN (RECOMMENDED DAILY):
+
+Run daily (for example 10:30 PM), after backup and restore verification windows.
+
+Windows – Task Scheduler:
+1. Create a task named "Inventario Integrity Scan".
+2. Program:  E:\Cursor Projects\Inventario Lite A\script\integrity-scan-scheduled.bat
+3. Set daily trigger.
+
+Linux/Mac – cron (10:30 PM daily):
+   30 22 * * * cd /path/to/inventario && npm run integrity:scan
+
+Integrity scan output:
+- JSON scan artifact: reports/integrity/integrity-scan-<timestamp>.json
+- Read-only repair proposal: reports/integrity/repair-report-<timestamp>.md
 
 --------------------------------------------------------------------------------
 TROUBLESHOOTING
