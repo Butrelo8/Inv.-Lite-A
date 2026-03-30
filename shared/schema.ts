@@ -1,4 +1,5 @@
-import { pgTable, text, serial, integer, date, timestamp, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, date, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -158,6 +159,38 @@ export const inventoryBulkUndo = pgTable(
     expiresAtIdx: index("inventory_bulk_undo_expires_at_idx").on(table.expiresAt),
   })
 );
+
+/** Custody assignments: at most one active row per item (returned_at IS NULL), enforced in DB. */
+export const inventoryAssignments = pgTable(
+  "inventory_assignments",
+  {
+    id: serial("id").primaryKey(),
+    itemId: integer("item_id")
+      .notNull()
+      .references(() => inventoryItems.id, { onDelete: "cascade" }),
+    assignee: text("assignee").notNull(),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+    conditionAtAssign: text("condition_at_assign"),
+    notes: text("notes"),
+    assignedByUserId: integer("assigned_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    returnedAt: timestamp("returned_at", { withTimezone: true }),
+    returnCondition: text("return_condition"),
+    returnNotes: text("return_notes"),
+    returnedByUserId: integer("returned_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    activeItemUnique: uniqueIndex("inventory_assignments_active_item_idx")
+      .on(table.itemId)
+      .where(sql`${table.returnedAt} is null`),
+    itemAssignedIdx: index("inventory_assignments_item_assigned_idx").on(table.itemId, table.assignedAt),
+  })
+);
+
+export type InventoryAssignment = typeof inventoryAssignments.$inferSelect;
+
+/** Canonical label when an asset has no active assignee (see DECISIONS.md). */
+export const UNASSIGNED_RESPONSIBLE_LABEL = "Sin asignar" as const;
 
 export type InventoryItem = typeof inventoryItems.$inferSelect;
 export type InventoryAttachment = typeof inventoryAttachments.$inferSelect;

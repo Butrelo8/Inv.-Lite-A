@@ -5,28 +5,6 @@ Track open work and completed items by version. See `CHANGELOG.md` for full rele
 ---
 ## Open
 ---
-### [Expansion] Add data-integrity scanner + repair report
-**What:** Add scheduled integrity scans for orphaned files/attachments/history mismatches and generate a read-only repair report.
-**Why:** Prevents silent drift and preserves trust as data volume and team usage scale.
-**Context:** Recent FK/order fixes show integrity guardrails are now a growth-critical capability.
-**Solution** Add a read-only integrity scanner job (script/integrity-scan.ts) that runs on a schedule, checks core drift conditions (orphan attachments/notes/doc links, history foreign-key mismatches, and DB-vs-filesystem file presence gaps), writes a timestamped scan artifact (integrity-scan-<timestamp>.json), generates a separate read-only repair proposal report (repair-report-<timestamp>.md|json with suggested SQL/file actions but no auto-mutation), and emits ops events (job.integrity_scan_success / job.integrity_scan_failure) so results are visible in Ops Health.
-**Done When** Scheduled scans run at least daily and complete without mutating production data; each run stores an auditable scan report with per-check counts and sample affected IDs; a repair report is generated with categorized proposed fixes (safe, needs review, destructive) and no automatic execution; scan pass/fail plus finding severity is emitted to ops_events and visible in Ops dashboard; alerting thresholds flag warning/critical drift; tests cover scanner query correctness, report generation, and failure-path event emission.
-**Effort:** M
-**Priority:** P0
-**Depends on:** Ops dashboard event pipeline for visibility.
-
----
-### [Expansion] Ship assignment and handover workflow
-**What:** Add explicit “assign asset” and “return asset” actions with required metadata (assignee/date/condition/notes) and normalized audit events.
-**Why:** Moves core usage from ad-hoc edits into structured workflows, increasing product stickiness.
-**Context:** Existing inventory edits are flexible; expansion requires governed lifecycle steps.
-**Solution** Add a first-class assignment workflow by introducing an inventory_assignments transaction table and explicit APIs (POST /api/inventory/:id/assign, POST /api/inventory/:id/return) that enforce role checks and state transitions, require assignment/return metadata (assignee/date/condition/notes), update inventory_items.responsible as the current-holder snapshot, and write normalized audit history events (ASSIGN, RETURN) with actor and timestamps instead of ad-hoc remarks.
-**Done When** Editors/admins can assign and return assets only through dedicated actions; assign is blocked when an active assignment already exists (unless explicit transfer flow), return is blocked when no active assignment exists; required metadata is validated server-side; each action writes auditable ASSIGN/RETURN history records and updates current responsible consistently; UI exposes Assign/Return dialogs with clear status (active vs returned) and item-level assignment timeline; tests cover permission enforcement, transition guards, and happy-path assign/return behavior.
-**Effort:** L
-**Priority:** P1
-**Depends on:** Stable audit/event schema and role checks.
-
----
 ### [Expansion] Ship maintenance and calibration workflow
 **What:** Add recurring maintenance/calibration schedules, due/overdue states, and completion actions with evidence/notes.
 **Why:** Operational value shifts from static inventory tracking to lifecycle management.
@@ -105,6 +83,24 @@ Track open work and completed items by version. See `CHANGELOG.md` for full rele
 
 ## Completed
 ---
+### [Expansion] Ship assignment and handover workflow (2026-03-27)
+**What:** Governed assign/return custody with metadata, `inventory_assignments` rows, and ASSIGN / RETURN / TRANSFER history.
+**Why:** Structured workflows instead of only ad-hoc `responsible` edits; audit trail for custody.
+**Context:** Migration `migrations/add-inventory-assignments.sql` and Drizzle `inventoryAssignments`; APIs `POST /api/inventory/:id/assign`, `POST /api/inventory/:id/return`, `GET /api/inventory/:id/assignments`; return sets `responsible` to **`Sin asignar`** (`UNASSIGNED_RESPONSIBLE_LABEL`, `DECISIONS.md`); list response includes `activeAssignmentItemIds`; Dashboard assign/return actions + “Asignado” badge; `AssignDialog`, `ReturnDialog`, `AssignmentTimeline` in `ItemViewDialog`; History page labels and JSON remark formatting; `client/src/hooks/use-assignments.ts`; tests `server/tests/assignment-workflow.test.ts`. Inline/bulk responsible edits remain the unstructured path (ADJUSTMENT, no assignment row).
+**Effort:** L
+**Priority:** P1
+**Depends on:** Audit/event schema and role checks (done).
+**Completed:** 2026-03-27
+
+### [Expansion] Add data-integrity scanner + repair report (2026-03-27)
+**What:** Read-only integrity scans, auditable artifacts, repair proposals, and Ops visibility for DB/filesystem drift.
+**Why:** Prevents silent drift and preserves trust as data volume and team usage scale.
+**Context:** Implemented `script/integrity-scan.ts` (`npm run integrity:scan`); writes `reports/integrity/integrity-scan-<timestamp>.json` and `repair-report-<timestamp>.md` with per-check counts, samples, and categorized proposed actions (safe / needs review / destructive); emits `job.integrity_scan_success` / `job.integrity_scan_failure` to `ops_events`; Ops Health shows `integrityScanSuccessRate7d` and `integrityScanIssuesLastRun` (`server/storage.ts`, `client/src/pages/OpsHealth.tsx`). Windows Task Scheduler hook: `script/integrity-scan-scheduled.bat`. Tests: `server/tests/integrity-scan-report.test.ts` (repair action generation). **Operational:** daily runs are configured outside the app (scheduler/cron/Task Scheduler)—not embedded in the Node process or Docker Compose by default. **Optional follow-ups:** machine-readable `repair-report-*.json`, deeper integration tests for SQL checks/event emission, explicit warning/critical thresholds for drift counts in Ops.
+**Effort:** M
+**Priority:** P0
+**Depends on:** Ops dashboard event pipeline (done).
+**Completed:** 2026-03-27
+
 ### [Expansion] Add guarded bulk operations + short undo window (2026-03-26)
 **What:** Implemented guarded bulk actions (status/reassign/archive/delete) with confirmation and short-lived undo for destructive bulk delete.
 **Why:** Improves team throughput while reducing operational mistakes at larger scale.

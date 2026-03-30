@@ -1,5 +1,6 @@
 import type { InventoryItem } from "@/hooks/use-inventory";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AssignmentTimeline } from "@/components/AssignmentTimeline";
 import { format } from "date-fns";
 
 export interface ItemViewDialogProps {
@@ -66,6 +67,11 @@ export function ItemViewDialog({ item, open, onOpenChange }: ItemViewDialogProps
           <div className="border-t pt-3 space-y-2">
             <div className="text-sm font-medium">Descripción (Notas internas)</div>
             <div className="text-sm whitespace-pre-wrap text-foreground">{item.notes ? item.notes : "—"}</div>
+          </div>
+
+          <div className="border-t pt-4 space-y-2">
+            <div className="text-sm font-medium">Historial de asignaciones</div>
+            <AssignmentTimeline itemId={item.id} />
           </div>
         </div>
       </DialogContent>

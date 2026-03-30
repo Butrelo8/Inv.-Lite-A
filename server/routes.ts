@@ -14,10 +14,16 @@ import { storage } from "./storage";
 import { suggestCode } from "./code-generator";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { insertInventoryItemSchema, inventoryAttachments } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import {
+  insertInventoryItemSchema,
+  inventoryAttachments,
+  inventoryItems,
+  inventoryAssignments,
+  inventoryHistory,
+  UNASSIGNED_RESPONSIBLE_LABEL,
+} from "@shared/schema";
+import { eq, and, isNull } from "drizzle-orm";
 import { db, pool } from "./db";
-import { inventoryItems } from "@shared/schema";
 import type { UserRole } from "@shared/schema";
 import { USER_ROLES } from "@shared/schema";
 import { ensureThumbnail, thumbsPath } from "./thumbnails";
@@ -76,6 +82,12 @@ const bulkArchiveSchema = z.object({
 
 function uniqueIds(ids: number[]): number[] {
   return Array.from(new Set(ids));
+}
+
+function httpStatusError(status: number, message: string): Error {
+  const e = new Error(message);
+  (e as Error & { status: number }).status = status;
+  return e;
 }
 
 function buildUndoToken(): string {
@@ -714,8 +726,19 @@ export async function registerRoutes(
     const modifiedAfter = req.query.modifiedAfter as string | undefined;
     const limit = req.query.limit != null ? Math.min(500, Math.max(1, parseInt(String(req.query.limit), 10) || 50)) : 50;
     const offset = req.query.offset != null ? Math.max(0, parseInt(String(req.query.offset), 10) || 0) : 0;
-    const { items, total } = await storage.getItemsPage(search, category, responsible, companyId, dateFrom, dateTo, addedAfter, modifiedAfter, limit, offset);
-    res.json({ items, total });
+    const { items, total, activeAssignmentItemIds } = await storage.getItemsPage(
+      search,
+      category,
+      responsible,
+      companyId,
+      dateFrom,
+      dateTo,
+      addedAfter,
+      modifiedAfter,
+      limit,
+      offset,
+    );
+    res.json({ items, total, activeAssignmentItemIds });
   });
 
   app.get("/api/companies", requireAuth, async (_req, res) => {
@@ -1132,6 +1155,157 @@ export async function registerRoutes(
       return res.status(404).json({ message: 'Item not found' });
     }
     res.json(item);
+  });
+
+  app.get(api.inventory.assignmentsList.path, requireAuth, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const assignments = await storage.getAssignments(id);
+    res.json({ assignments });
+  });
+
+  app.post(api.inventory.assign.path, requireAuth, requireRole("editor", "admin"), async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const parsed = api.inventory.assign.input.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Invalid body", field: parsed.error.errors[0]?.path.join(".") });
+    }
+    const userId = Number.isFinite((req as any).user?.id) ? (req as any).user.id : null;
+    try {
+      const out = await db.transaction(async (tx) => {
+        const [item] = await tx.select().from(inventoryItems).where(eq(inventoryItems.id, id));
+        if (!item) throw httpStatusError(404, "Item not found");
+        const [active] = await tx
+          .select()
+          .from(inventoryAssignments)
+          .where(and(eq(inventoryAssignments.itemId, id), isNull(inventoryAssignments.returnedAt)))
+          .limit(1);
+        if (active && !parsed.data.transfer) throw httpStatusError(409, "Already assigned");
+        if (active && parsed.data.transfer) {
+          await tx
+            .update(inventoryAssignments)
+            .set({
+              returnedAt: new Date(),
+              returnNotes: "Transferido",
+              returnedByUserId: userId,
+            })
+            .where(eq(inventoryAssignments.id, active.id));
+          await tx.insert(inventoryHistory).values({
+            productId: id,
+            companyId: item.companyId ?? null,
+            transactionType: "TRANSFER",
+            quantity: 0,
+            userId,
+            remarks: JSON.stringify({
+              kind: "TRANSFER",
+              closedAssignmentId: active.id,
+              fromAssignee: active.assignee,
+              toAssignee: parsed.data.assignee,
+            }),
+          });
+        }
+        const [inserted] = await tx
+          .insert(inventoryAssignments)
+          .values({
+            itemId: id,
+            assignee: parsed.data.assignee,
+            conditionAtAssign: parsed.data.condition ?? null,
+            notes: parsed.data.notes ?? null,
+            assignedByUserId: userId,
+          })
+          .returning();
+        if (!inserted) throw new Error("Insert assignment failed");
+        await tx
+          .update(inventoryItems)
+          .set({ responsible: parsed.data.assignee, updatedAt: new Date() })
+          .where(eq(inventoryItems.id, id));
+        const [updatedItem] = await tx.select().from(inventoryItems).where(eq(inventoryItems.id, id));
+        if (!updatedItem) throw new Error("Item missing after assign");
+        await tx.insert(inventoryHistory).values({
+          productId: id,
+          companyId: item.companyId ?? null,
+          transactionType: "ASSIGN",
+          quantity: 0,
+          userId,
+          remarks: JSON.stringify({
+            kind: "ASSIGN",
+            assignmentId: inserted.id,
+            assignee: parsed.data.assignee,
+            condition: parsed.data.condition ?? null,
+            notes: parsed.data.notes ?? null,
+          }),
+        });
+        return { assignment: inserted, item: updatedItem };
+      });
+      res.json(out);
+    } catch (err: unknown) {
+      const status = (err as Error & { status?: number })?.status;
+      if (status === 404) return res.status(404).json({ message: (err as Error).message });
+      if (status === 409) return res.status(409).json({ message: (err as Error).message });
+      console.error("Assign transaction failed", err);
+      return res.status(500).json({ message: "Assign failed" });
+    }
+  });
+
+  app.post(api.inventory.return.path, requireAuth, requireRole("editor", "admin"), async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const parsed = api.inventory.return.input.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Invalid body", field: parsed.error.errors[0]?.path.join(".") });
+    }
+    const userId = Number.isFinite((req as any).user?.id) ? (req as any).user.id : null;
+    try {
+      const out = await db.transaction(async (tx) => {
+        const [item] = await tx.select().from(inventoryItems).where(eq(inventoryItems.id, id));
+        if (!item) throw httpStatusError(404, "Item not found");
+        const [active] = await tx
+          .select()
+          .from(inventoryAssignments)
+          .where(and(eq(inventoryAssignments.itemId, id), isNull(inventoryAssignments.returnedAt)))
+          .limit(1);
+        if (!active) throw httpStatusError(409, "No active assignment");
+        const [closed] = await tx
+          .update(inventoryAssignments)
+          .set({
+            returnedAt: new Date(),
+            returnCondition: parsed.data.condition ?? null,
+            returnNotes: parsed.data.notes ?? null,
+            returnedByUserId: userId,
+          })
+          .where(eq(inventoryAssignments.id, active.id))
+          .returning();
+        if (!closed) throw new Error("Return update failed");
+        await tx
+          .update(inventoryItems)
+          .set({ responsible: UNASSIGNED_RESPONSIBLE_LABEL, updatedAt: new Date() })
+          .where(eq(inventoryItems.id, id));
+        const [updatedItem] = await tx.select().from(inventoryItems).where(eq(inventoryItems.id, id));
+        if (!updatedItem) throw new Error("Item missing after return");
+        await tx.insert(inventoryHistory).values({
+          productId: id,
+          companyId: item.companyId ?? null,
+          transactionType: "RETURN",
+          quantity: 0,
+          userId,
+          remarks: JSON.stringify({
+            kind: "RETURN",
+            assignmentId: active.id,
+            returnCondition: parsed.data.condition ?? null,
+            notes: parsed.data.notes ?? null,
+          }),
+        });
+        return { assignment: closed, item: updatedItem };
+      });
+      res.json(out);
+    } catch (err: unknown) {
+      const status = (err as Error & { status?: number })?.status;
+      if (status === 404) return res.status(404).json({ message: (err as Error).message });
+      if (status === 409) return res.status(409).json({ message: (err as Error).message });
+      console.error("Return transaction failed", err);
+      return res.status(500).json({ message: "Return failed" });
+    }
   });
 
   app.post(api.inventory.create.path, requireAuth, requireRole("editor", "admin"), async (req, res) => {

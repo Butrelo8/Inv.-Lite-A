@@ -48,11 +48,15 @@ import { InventoryForm } from "@/components/InventoryForm";
 import { ImageViewer } from "@/components/ImageViewer";
 import { ItemLabelDialog } from "@/components/ItemLabelDialog";
 import { ItemViewDialog } from "@/components/ItemViewDialog";
+import { AssignDialog } from "@/components/AssignDialog";
+import { ReturnDialog } from "@/components/ReturnDialog";
 import { LoadingOverlay } from "@/components/LoadingOverlay";
+import InventoryAnalytics from "@/components/InventoryAnalytics";
+import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Plus, Edit2, Trash2, Copy, Package, FilterX, Loader2, Download, Upload, ImageIcon, ChevronDown, ChevronUp, ChevronsUpDown, FileSpreadsheet, FileText, Columns3, QrCode, ChevronLeft, ChevronRight, X, Eye } from "lucide-react";
+import { Plus, Edit2, Trash2, Copy, Package, FilterX, Loader2, Download, Upload, ImageIcon, ChevronDown, ChevronUp, ChevronsUpDown, FileSpreadsheet, FileText, Columns3, QrCode, ChevronLeft, ChevronRight, X, Eye, UserPlus, Undo2, BarChart3 } from "lucide-react";
 import { format } from "date-fns";
 import { categoryToDisplay, conditionToDisplay } from "@/lib/category-translate";
 import { SUGGESTED_CATEGORIES } from "@/lib/category-suggest";
@@ -63,6 +67,18 @@ const CONDITIONS = ["New", "Excellent", "Good", "Fair", "Poor", "Damaged"];
 
 const INVENTORY_COLUMNS_STORAGE_KEY = "inventory-table-columns";
 const INVENTORY_SORT_STORAGE_KEY = "inventory-table-sort";
+const INVENTORY_ANALYTICS_OPEN_KEY = "inventory-analytics-open";
+
+function loadAnalyticsOpen(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const raw = localStorage.getItem(INVENTORY_ANALYTICS_OPEN_KEY);
+    if (raw === null) return false;
+    return raw === "true";
+  } catch {
+    return false;
+  }
+}
 
 /** Returns the thumbnail URL for a given imageUrl (e.g. /uploads/42-123.jpg → /uploads/thumbs/42-123.webp) */
 function thumbUrl(imageUrl: string | null | undefined): string | undefined {
@@ -171,6 +187,8 @@ export default function Dashboard() {
   const [labelItem, setLabelItem] = useState<InventoryItem | null>(null);
   const [viewingItem, setViewingItem] = useState<InventoryItem | null>(null);
   const [viewItemDetails, setViewItemDetails] = useState<InventoryItem | null>(null);
+  const [assignDialogItem, setAssignDialogItem] = useState<InventoryItem | null>(null);
+  const [returnDialogItem, setReturnDialogItem] = useState<InventoryItem | null>(null);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(loadColumnVisibility);
   const [sortState, setSortState] = useState<{ sortBy: SortableColumn; sortDir: "asc" | "desc" }>(loadSort);
   const [page, setPage] = useState(1);
@@ -188,6 +206,7 @@ export default function Dashboard() {
   const [bulkDuplicating, setBulkDuplicating] = useState(false);
   const [bulkUpdating, setBulkUpdating] = useState(false);
   const [lastBulkUndo, setLastBulkUndo] = useState<{ token: string; expiresAt: string; deleted: number } | null>(null);
+  const [showAnalytics, setShowAnalytics] = useState(loadAnalyticsOpen);
 
   const debouncedSearch = useDebounce(search, 300);
 
@@ -264,6 +283,10 @@ export default function Dashboard() {
     offset: (page - 1) * pageSize,
   });
   const items = inventoryData?.items ?? [];
+  const activeAssignmentSet = useMemo(
+    () => new Set(inventoryData?.activeAssignmentItemIds ?? []),
+    [inventoryData?.activeAssignmentItemIds],
+  );
   const totalItems = inventoryData?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const fromItem = totalItems === 0 ? 0 : (page - 1) * pageSize + 1;
@@ -283,6 +306,14 @@ export default function Dashboard() {
     const t = window.setTimeout(() => setLastBulkUndo(null), ms + 200);
     return () => window.clearTimeout(t);
   }, [lastBulkUndo]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(INVENTORY_ANALYTICS_OPEN_KEY, String(showAnalytics));
+    } catch {
+      /* ignore */
+    }
+  }, [showAnalytics]);
 
   const { data: filterOptions = { categories: [], responsible: [], companies: [] } } = useFilterOptions();
   const companiesById = useMemo(() => {
@@ -847,8 +878,27 @@ export default function Dashboard() {
         message={loadingOverlay.message}
         progress={loadingOverlay.progress}
       />
+      <Collapsible open={showAnalytics} onOpenChange={setShowAnalytics}>
+        <CollapsibleContent>
+          {showAnalytics && (
+            <div className="rounded-2xl border border-border/50 bg-card/30 p-5 md:p-6 mb-4">
+              <InventoryAnalytics />
+            </div>
+          )}
+        </CollapsibleContent>
+      </Collapsible>
       {/* Action buttons */}
       <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant={showAnalytics ? "default" : "outline"}
+            size="sm"
+            onClick={() => setShowAnalytics((v) => !v)}
+            aria-pressed={showAnalytics}
+          >
+            <BarChart3 className="w-4 h-4 mr-2" />
+            Analíticas
+          </Button>
           {canEdit && (
           <Button variant="outline" size="sm" onClick={() => { window.location.href = "/api/inventory/export/template"; }}>
             <Download className="w-4 h-4 mr-2" />
@@ -1504,15 +1554,27 @@ export default function Dashboard() {
                         />
                       ) : canEdit ? (
                         <div
-                          className="min-h-8 px-3 py-1.5 flex items-center cursor-cell"
+                          className="min-h-8 px-3 py-1.5 flex items-center gap-2 flex-wrap cursor-cell"
                           tabIndex={0}
                           onClick={() => setEditingCell({ itemId: item.id, field: "responsible" })}
                           onFocus={() => setEditingCell({ itemId: item.id, field: "responsible" })}
                         >
-                          {item.responsible || "-"}
+                          <span>{item.responsible || "-"}</span>
+                          {activeAssignmentSet.has(item.id) && (
+                            <span className="text-[10px] font-medium uppercase tracking-wide rounded-full bg-primary/15 text-primary px-2 py-0.5 shrink-0">
+                              Asignado
+                            </span>
+                          )}
                         </div>
                       ) : (
-                        item.responsible || "-"
+                        <div className="flex items-center gap-2 flex-wrap px-3 py-1.5 min-h-8">
+                          <span>{item.responsible || "-"}</span>
+                          {activeAssignmentSet.has(item.id) && (
+                            <span className="text-[10px] font-medium uppercase tracking-wide rounded-full bg-primary/15 text-primary px-2 py-0.5 shrink-0">
+                              Asignado
+                            </span>
+                          )}
+                        </div>
                       )}
                     </TableCell>
                   )}
@@ -1734,6 +1796,32 @@ export default function Dashboard() {
                       >
                         <QrCode className="w-4 h-4" />
                       </Button>
+                      {canEdit && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 hover:text-primary hover:bg-primary/10"
+                            onClick={() => setAssignDialogItem(item)}
+                            title="Asignar custodia"
+                            aria-label={`Asignar custodia: ${item.code} — ${item.name}`}
+                          >
+                            <UserPlus className="w-4 h-4" />
+                          </Button>
+                          {activeAssignmentSet.has(item.id) && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 hover:text-primary hover:bg-primary/10"
+                              onClick={() => setReturnDialogItem(item)}
+                              title="Devolver"
+                              aria-label={`Devolver: ${item.code} — ${item.name}`}
+                            >
+                              <Undo2 className="w-4 h-4" />
+                            </Button>
+                          )}
+                        </>
+                      )}
                       {!canEdit && (
                         <Button
                           variant="ghost"
@@ -2044,6 +2132,23 @@ export default function Dashboard() {
         open={!!viewItemDetails}
         onOpenChange={(open) => {
           if (!open) setViewItemDetails(null);
+        }}
+      />
+
+      <AssignDialog
+        item={assignDialogItem}
+        open={!!assignDialogItem}
+        onOpenChange={(open) => {
+          if (!open) setAssignDialogItem(null);
+        }}
+        hasActiveAssignment={assignDialogItem ? activeAssignmentSet.has(assignDialogItem.id) : false}
+      />
+
+      <ReturnDialog
+        item={returnDialogItem}
+        open={!!returnDialogItem}
+        onOpenChange={(open) => {
+          if (!open) setReturnDialogItem(null);
         }}
       />
 

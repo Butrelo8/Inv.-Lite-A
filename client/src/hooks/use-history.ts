@@ -28,6 +28,8 @@ export interface HistoryFilters {
   dateFrom?: string;
   dateTo?: string;
   search?: string;
+  /** When false, the query does not run (e.g. viewer role). */
+  enabled?: boolean;
 }
 
 export interface HistoryListResponse {
@@ -39,6 +41,7 @@ export function useHistory(filters?: HistoryFilters | number, limit = 100) {
   const params: HistoryFilters =
     typeof filters === "number" ? { productId: filters, limit } : { ...filters, limit: filters?.limit ?? limit };
   const offset = params.offset ?? 0;
+  const queryEnabled = typeof filters === "number" ? true : params.enabled !== false;
   return useQuery({
     queryKey: ["/api/history", params.productId, params.limit, offset, params.transactionType, params.userId, params.dateFrom, params.dateTo, params.search],
     queryFn: async () => {
@@ -55,7 +58,7 @@ export function useHistory(filters?: HistoryFilters | number, limit = 100) {
       if (!res.ok) throw new Error("Failed to fetch history");
       return res.json() as Promise<HistoryListResponse>;
     },
-    enabled: true,
+    enabled: queryEnabled,
   });
 }
 
