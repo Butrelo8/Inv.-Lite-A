@@ -10,7 +10,12 @@ import { Loader2, List, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmployeeQuickViewDialog } from "@/components/EmployeeQuickViewDialog";
 import { categoryToDisplay, conditionToDisplay } from "@/lib/category-translate";
-import { aggregateByCategory, aggregateByCondition, aggregateByResponsible } from "@/lib/inventory-aggregates";
+import {
+  aggregateByCategory,
+  aggregateByCondition,
+  aggregateByResponsible,
+  isInventoryResponsibleAssigned,
+} from "@/lib/inventory-aggregates";
 import { RecentActivityFeed } from "@/components/RecentActivityFeed";
 
 const CHART_COLORS = ["hsl(var(--chart-1))", "hsl(var(--chart-2))", "hsl(var(--chart-3))", "hsl(var(--chart-4))", "hsl(var(--chart-5))", "hsl(220, 70%, 50%)", "hsl(280, 65%, 60%)", "hsl(340, 75%, 55%)"];
@@ -47,14 +52,12 @@ export default function Overview() {
   const byConditionDisplay = byCondition.map((c) => ({ name: conditionToDisplay(c.name), count: c.count }));
   const categoriesCount = new Set(items.map((i) => i.category?.trim() || "Uncategorized")).size;
 
-  const assignedCount = items.filter(
-    (i) => (i.responsible?.trim() ?? "") !== "" && (i.responsible?.trim() ?? "") !== "Equipo de trabajo"
-  ).length;
-  const notAssignedCount = items.filter(
-    (i) => !i.responsible?.trim() || i.responsible?.trim() === "Equipo de trabajo"
-  ).length;
+  const assignedCount = items.filter((i) => isInventoryResponsibleAssigned(i.responsible)).length;
+  const notAssignedCount = items.filter((i) => !isInventoryResponsibleAssigned(i.responsible)).length;
 
-  const uniquePersonsCount = new Set(items.map((i) => i.responsible?.trim() || "Equipo de trabajo")).size;
+  const uniquePersonsCount = new Set(
+    items.filter((i) => isInventoryResponsibleAssigned(i.responsible)).map((i) => (i.responsible ?? "").trim()),
+  ).size;
 
   const byCategorySorted = [...byCategoryDisplay].sort((a, b) => b.count - a.count);
 

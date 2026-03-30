@@ -2,6 +2,19 @@
  * Shared aggregation helpers for inventory analytics (Overview, Dashboard analytics panel).
  */
 
+import { UNASSIGNED_RESPONSIBLE_LABEL } from "@shared/schema";
+
+const TEAM_POOL_LABEL = "Equipo de trabajo";
+
+/** True when KPIs should treat the item as assigned to a specific person (not pool, not canonical unassigned). */
+export function isInventoryResponsibleAssigned(responsible: string | null | undefined): boolean {
+  const r = responsible?.trim() ?? "";
+  if (r === "") return false;
+  if (r === TEAM_POOL_LABEL) return false;
+  if (r === UNASSIGNED_RESPONSIBLE_LABEL) return false;
+  return true;
+}
+
 export function aggregateByCategory(items: { category?: string | null }[]) {
   const map = new Map<string, number>();
   for (const item of items) {
