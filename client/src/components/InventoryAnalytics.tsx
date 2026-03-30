@@ -148,12 +148,8 @@ export default function InventoryAnalytics() {
       }));
       const categoriesCount = new Set(items.map((i) => i.category?.trim() || "Uncategorized")).size;
 
-      const assignedCount = items.filter(
-        (i) => (i.responsible?.trim() ?? "") !== "" && (i.responsible?.trim() ?? "") !== "Equipo de trabajo",
-      ).length;
-      const notAssignedCount = items.filter(
-        (i) => !i.responsible?.trim() || i.responsible?.trim() === "Equipo de trabajo",
-      ).length;
+      const assignedCount = items.filter((i) => isInventoryResponsibleAssigned(i.responsible)).length;
+      const notAssignedCount = items.filter((i) => !isInventoryResponsibleAssigned(i.responsible)).length;
       const newCount = items.filter((i) => (i.condition?.trim() ?? "") === "New").length;
       const newPct = totalCount > 0 ? Math.round((newCount / totalCount) * 100) : 0;
 
