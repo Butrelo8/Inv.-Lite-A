@@ -7,7 +7,12 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/
 import { Pie, PieChart, Cell } from "recharts";
 import { Loader2 } from "lucide-react";
 import { categoryToDisplay, conditionToDisplay } from "@/lib/category-translate";
-import { aggregateByCategory, aggregateByCondition, aggregateByResponsible } from "@/lib/inventory-aggregates";
+import {
+  aggregateByCategory,
+  aggregateByCondition,
+  aggregateByResponsible,
+  isInventoryResponsibleAssigned,
+} from "@/lib/inventory-aggregates";
 import { RecentActivityFeed } from "@/components/RecentActivityFeed";
 const CHART_COLORS = [
   "hsl(var(--chart-1))",
