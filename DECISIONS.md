@@ -55,6 +55,19 @@ Updated when decisions are made.
 **Alternatives considered:** Double-submit cookies or synchronizer tokens.
 
 **Why not the others:** This provides a server-side trust boundary with minimal frontend token plumbing.
+
+---
+
+## 2026-03-27 — Return asset sets `responsible` to “Sin asignar”
+
+**Context:** The assignment/return workflow will update `inventory_items.responsible` as the current-holder snapshot. We need a single canonical value when nothing is actively assigned.
+
+**Decision:** On successful **return**, set `inventory_items.responsible` to the literal string **`Sin asignar`** (not `NULL`), so filters, exports, and the Dashboard stay consistent with existing text-based “responsible” usage.
+
+**Alternatives considered:** Set `responsible` to `NULL`; use a different label per locale.
+
+**Why not the others:** Nullable responsible complicates filters and CSV columns that assume a string; a fixed Spanish label matches the product language already used in the UI unless/until i18n is introduced.
+
 ---
 
 <!-- Add new decisions above this line -->

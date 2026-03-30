@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { History as HistoryIcon, Loader2, FilterX, ChevronLeft, ChevronRight } from "lucide-react";
 import { format } from "date-fns";
+import { formatHistorySubtitle } from "@/lib/history-display";
 
 const TRANSACTION_LABELS: Record<string, string> = {
   CREATE: "Creado",
@@ -23,9 +24,12 @@ const TRANSACTION_LABELS: Record<string, string> = {
   IMPORT: "Importado",
   IN: "Entrada",
   OUT: "Salida",
+  ASSIGN: "Asignado",
+  RETURN: "Devuelto",
+  TRANSFER: "Transferido",
 };
 
-const TRANSACTION_TYPES = ["CREATE", "UPDATE", "ADJUSTMENT", "DELETE", "IMPORT"] as const;
+const TRANSACTION_TYPES = ["CREATE", "UPDATE", "ADJUSTMENT", "DELETE", "IMPORT", "ASSIGN", "RETURN", "TRANSFER"] as const;
 
 const HISTORY_PAGE_SIZE = 100;
 
@@ -239,8 +243,8 @@ export default function History() {
                         <TableCell className="text-muted-foreground text-sm whitespace-nowrap">
                           {format(date, "dd/MM/yyyy HH:mm")}
                         </TableCell>
-                        <TableCell className="max-w-[180px] truncate text-muted-foreground" title={entry.remarks ?? ""}>
-                          {entry.remarks ?? "—"}
+                        <TableCell className="max-w-[220px] truncate text-muted-foreground" title={formatHistorySubtitle(entry.remarks, entry.transactionType)}>
+                          {formatHistorySubtitle(entry.remarks, entry.transactionType)}
                         </TableCell>
                         <TableCell className="text-right">
                           {entry.canRevert ? (

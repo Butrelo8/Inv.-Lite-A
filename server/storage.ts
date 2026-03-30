@@ -3,6 +3,7 @@ import {
   inventoryItems,
   inventoryAttachments,
   inventoryHistory,
+  inventoryAssignments,
   employeeDocuments,
   sharedNotes,
   users,
@@ -11,6 +12,7 @@ import {
   type CreateItemRequest,
   type UpdateItemRequest,
   type InventoryHistoryEntry,
+  type InventoryAssignment,
   type SharedNote,
   type User,
   type UpdateSharedNoteRequest,
@@ -19,6 +21,7 @@ import {
 } from "@shared/schema";
 import type { OpsEventSeverity, OpsEventType, OpsSummaryResponse } from "@shared/ops-health";
 import { eq, ilike, or, desc, and, gte, lte, isNull, count, inArray, sql, gt } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { pool } from "./db";
 import { suggestCode } from "./code-generator";
 
@@ -30,7 +33,11 @@ export interface IStorage {
   getUsers(): Promise<{ id: number; username: string; role: string; createdAt: Date }[]>;
   updateUserRole(id: number, role: string): Promise<{ id: number; username: string; role: string } | undefined>;
   getItems(search?: string, category?: string, responsible?: string, companyId?: number, dateFrom?: string, dateTo?: string, addedAfter?: string, modifiedAfter?: string): Promise<InventoryItem[]>;
-  getItemsPage(search?: string, category?: string, responsible?: string, companyId?: number, dateFrom?: string, dateTo?: string, addedAfter?: string, modifiedAfter?: string, limit?: number, offset?: number): Promise<{ items: InventoryItem[]; total: number }>;
+  getItemsPage(search?: string, category?: string, responsible?: string, companyId?: number, dateFrom?: string, dateTo?: string, addedAfter?: string, modifiedAfter?: string, limit?: number, offset?: number): Promise<{ items: InventoryItem[]; total: number; activeAssignmentItemIds: number[] }>;
+  getActiveAssignment(itemId: number): Promise<InventoryAssignment | undefined>;
+  getAssignments(itemId: number): Promise<
+    (InventoryAssignment & { assignedByUsername: string | null; returnedByUsername: string | null })[]
+  >;
   getFilterOptions(): Promise<{ categories: string[]; responsible: string[]; companies: { id: number; name: string }[] }>;
   getCompanies(): Promise<{ id: number; name: string }[]>;
   createCompany(name: string): Promise<{ id: number; name: string }>;
@@ -150,7 +157,7 @@ export class DatabaseStorage implements IStorage {
     return await query;
   }
 
-  async getItemsPage(search?: string, category?: string, responsible?: string, companyId?: number, dateFrom?: string, dateTo?: string, addedAfter?: string, modifiedAfter?: string, limit = 50, offset = 0): Promise<{ items: InventoryItem[]; total: number }> {
+  async getItemsPage(search?: string, category?: string, responsible?: string, companyId?: number, dateFrom?: string, dateTo?: string, addedAfter?: string, modifiedAfter?: string, limit = 50, offset = 0): Promise<{ items: InventoryItem[]; total: number; activeAssignmentItemIds: number[] }> {
     const conditions = this.buildItemConditions(search, category, responsible, companyId, dateFrom, dateTo, addedAfter, modifiedAfter);
     const baseQuery = db.select().from(inventoryItems).orderBy(desc(inventoryItems.id));
     const countQuery = db.select({ count: count() }).from(inventoryItems);
@@ -160,7 +167,56 @@ export class DatabaseStorage implements IStorage {
       withWhere ? baseQuery.where(withWhere).limit(limit).offset(offset) : baseQuery.limit(limit).offset(offset),
     ]);
     const total = Number((countResult as { count: number }[])[0]?.count ?? 0);
-    return { items: items as InventoryItem[], total };
+    const list = items as InventoryItem[];
+    const ids = list.map((i) => i.id);
+    let activeAssignmentItemIds: number[] = [];
+    if (ids.length > 0) {
+      const activeRows = await db
+        .select({ itemId: inventoryAssignments.itemId })
+        .from(inventoryAssignments)
+        .where(and(inArray(inventoryAssignments.itemId, ids), isNull(inventoryAssignments.returnedAt)));
+      activeAssignmentItemIds = activeRows.map((r) => r.itemId);
+    }
+    return { items: list, total, activeAssignmentItemIds };
+  }
+
+  async getActiveAssignment(itemId: number): Promise<InventoryAssignment | undefined> {
+    const [row] = await db
+      .select()
+      .from(inventoryAssignments)
+      .where(and(eq(inventoryAssignments.itemId, itemId), isNull(inventoryAssignments.returnedAt)))
+      .limit(1);
+    return row;
+  }
+
+  async getAssignments(itemId: number): Promise<
+    (InventoryAssignment & { assignedByUsername: string | null; returnedByUsername: string | null })[]
+  > {
+    const assigner = alias(users, "assignment_assigner");
+    const returner = alias(users, "assignment_returner");
+    const rows = await db
+      .select({
+        id: inventoryAssignments.id,
+        itemId: inventoryAssignments.itemId,
+        assignee: inventoryAssignments.assignee,
+        assignedAt: inventoryAssignments.assignedAt,
+        conditionAtAssign: inventoryAssignments.conditionAtAssign,
+        notes: inventoryAssignments.notes,
+        assignedByUserId: inventoryAssignments.assignedByUserId,
+        returnedAt: inventoryAssignments.returnedAt,
+        returnCondition: inventoryAssignments.returnCondition,
+        returnNotes: inventoryAssignments.returnNotes,
+        returnedByUserId: inventoryAssignments.returnedByUserId,
+        createdAt: inventoryAssignments.createdAt,
+        assignedByUsername: assigner.username,
+        returnedByUsername: returner.username,
+      })
+      .from(inventoryAssignments)
+      .leftJoin(assigner, eq(inventoryAssignments.assignedByUserId, assigner.id))
+      .leftJoin(returner, eq(inventoryAssignments.returnedByUserId, returner.id))
+      .where(eq(inventoryAssignments.itemId, itemId))
+      .orderBy(desc(inventoryAssignments.assignedAt));
+    return rows as (InventoryAssignment & { assignedByUsername: string | null; returnedByUsername: string | null })[];
   }
 
   async getFilterOptions(): Promise<{ categories: string[]; responsible: string[]; companies: { id: number; name: string }[] }> {

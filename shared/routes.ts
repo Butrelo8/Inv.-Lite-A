@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertInventoryItemSchema, inventoryItems } from './schema';
+import { insertInventoryItemSchema, inventoryItems, inventoryAssignments } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -7,6 +7,9 @@ export const errorSchemas = {
     field: z.string().optional(),
   }),
   notFound: z.object({
+    message: z.string(),
+  }),
+  conflict: z.object({
     message: z.string(),
   }),
   internal: z.object({
@@ -29,6 +32,7 @@ export const api = {
         200: z.object({
           items: z.array(z.custom<typeof inventoryItems.$inferSelect>()),
           total: z.number(),
+          activeAssignmentItemIds: z.array(z.number()),
         }),
       },
     },
@@ -65,6 +69,58 @@ export const api = {
       responses: {
         204: z.void(),
         404: errorSchemas.notFound,
+      },
+    },
+    assign: {
+      method: 'POST' as const,
+      path: '/api/inventory/:id/assign' as const,
+      input: z.object({
+        assignee: z.string().trim().min(1).max(120),
+        condition: z.string().trim().max(80).optional(),
+        notes: z.string().trim().max(2000).optional(),
+        transfer: z.boolean().optional(),
+      }),
+      responses: {
+        200: z.object({
+          assignment: z.custom<typeof inventoryAssignments.$inferSelect>(),
+          item: z.custom<typeof inventoryItems.$inferSelect>(),
+        }),
+        400: errorSchemas.validation,
+        404: errorSchemas.notFound,
+        409: errorSchemas.conflict,
+      },
+    },
+    return: {
+      method: 'POST' as const,
+      path: '/api/inventory/:id/return' as const,
+      input: z.object({
+        condition: z.string().trim().max(80).optional(),
+        notes: z.string().trim().max(2000).optional(),
+      }),
+      responses: {
+        200: z.object({
+          assignment: z.custom<typeof inventoryAssignments.$inferSelect>(),
+          item: z.custom<typeof inventoryItems.$inferSelect>(),
+        }),
+        400: errorSchemas.validation,
+        404: errorSchemas.notFound,
+        409: errorSchemas.conflict,
+      },
+    },
+    assignmentsList: {
+      method: 'GET' as const,
+      path: '/api/inventory/:id/assignments' as const,
+      responses: {
+        200: z.object({
+          assignments: z.array(
+            z.custom<
+              typeof inventoryAssignments.$inferSelect & {
+                assignedByUsername: string | null;
+                returnedByUsername: string | null;
+              }
+            >(),
+          ),
+        }),
       },
     },
   },
