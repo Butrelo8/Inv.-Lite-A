@@ -5,7 +5,7 @@
 
 import { db } from "./db";
 import { inventoryItems } from "@shared/schema";
-import { like, asc } from "drizzle-orm";
+import { like, asc, eq, and } from "drizzle-orm";
 
 /** Normalize text for keyword matching (lowercase, no accents) */
 function normalize(t: string): string {
@@ -97,14 +97,19 @@ export function derivePrefix(category: string | null | undefined, name: string |
  */
 export async function suggestCode(
   category: string | null | undefined,
-  name: string | null | undefined
+  name: string | null | undefined,
+  siteId?: number
 ): Promise<string> {
   const prefix = derivePrefix(category, name);
+
+  const siteCond = siteId != null ? eq(inventoryItems.siteId, siteId) : undefined;
+  const prefixCond = like(inventoryItems.code, `${prefix}%`);
+  const whereClause = siteCond != null ? and(siteCond, prefixCond) : prefixCond;
 
   const existing = await db
     .select({ code: inventoryItems.code })
     .from(inventoryItems)
-    .where(like(inventoryItems.code, `${prefix}%`))
+    .where(whereClause)
     .orderBy(asc(inventoryItems.code))
     .limit(1);
 

@@ -95,6 +95,8 @@ interface InventoryFormProps {
   onSubmit: (data: FormValues, imageFiles?: File[]) => Promise<void>;
   isSubmitting: boolean;
   onCancel: () => void;
+  /** When site scoping is enabled, scopes auto code suggestion to this site. */
+  suggestCodeSiteId?: number;
 }
 
 const BASE_CATEGORIES = [...SUGGESTED_CATEGORIES, "Office Supplies"];
@@ -103,7 +105,7 @@ const CONDITIONS = [
   "New", "Excellent", "Good", "Fair", "Poor", "Damaged"
 ];
 
-export function InventoryForm({ defaultValues, onSubmit, isSubmitting, onCancel }: InventoryFormProps) {
+export function InventoryForm({ defaultValues, onSubmit, isSubmitting, onCancel, suggestCodeSiteId }: InventoryFormProps) {
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -127,7 +129,7 @@ export function InventoryForm({ defaultValues, onSubmit, isSubmitting, onCancel 
   const [deletingSharedNote, setDeletingSharedNote] = useState<SharedNote | null>(null);
 
   const { data: attachments = [] } = useAttachments(itemId);
-  const { data: filterOptions } = useFilterOptions();
+  const { data: filterOptions } = useFilterOptions(suggestCodeSiteId);
   const deleteAttachment = useDeleteAttachment();
   const companies = filterOptions?.companies ?? [];
   const [viewingIndex, setViewingIndex] = useState<number | null>(null);
@@ -178,7 +180,7 @@ export function InventoryForm({ defaultValues, onSubmit, isSubmitting, onCancel 
   const debouncedName = useDebounce(watchedName, 500);
   const debouncedCategory = useDebounce(watchedCategory, 300);
   const isCreateMode = !itemId;
-  const { data: suggestedCode } = useSuggestCode(debouncedCategory, debouncedName, isCreateMode);
+  const { data: suggestedCode } = useSuggestCode(debouncedCategory, debouncedName, isCreateMode, suggestCodeSiteId);
 
   useEffect(() => {
     if (isCreateMode && suggestedCode) {
@@ -392,7 +394,7 @@ export function InventoryForm({ defaultValues, onSubmit, isSubmitting, onCancel 
               <FormItem>
                 <FormLabel>Empresa</FormLabel>
                 <Select
-                  value={field.value == null || field.value === "" ? "none" : String(field.value)}
+                  value={field.value == null ? "none" : String(field.value)}
                   onValueChange={(v) => field.onChange(v === "none" ? null : Number(v))}
                 >
                   <FormControl>

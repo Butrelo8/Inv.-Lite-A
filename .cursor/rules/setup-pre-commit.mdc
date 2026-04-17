@@ -1,0 +1,67 @@
+---
+description: Set up Husky + lint-staged + Prettier + typecheck/tests on commit (Bun-first). Use when adding pre-commit hooks, Husky, or lint-staged.
+alwaysApply: false
+---
+
+## SETUP PRE-COMMIT — SCOPE
+- Use when the user wants commit-time formatting, lint-staged, or Husky in the **current repo**.
+- **Default package manager: Bun** (stack.mdc). Fall back if lockfiles indicate otherwise: `pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn, `package-lock.json` → npm.
+
+## WHAT TO INSTALL (devDependencies)
+- `husky` `lint-staged` `prettier`
+
+```bash
+bun add -d husky lint-staged prettier
+```
+
+(Replace with `pnpm add -D`, `yarn add -D`, or `npm install -D` if not using Bun.)
+
+## INITIALIZE HUSKY
+```bash
+bunx husky init
+```
+- Ensures `.husky/` exists and `package.json` has `"prepare": "husky"` (or equivalent).
+
+## `.husky/pre-commit` (Husky v9+ — no shebang required)
+```text
+bunx lint-staged
+bun run typecheck
+bun test
+```
+- **Adapt**: use `pnpm exec` / `yarn` / `npx` if not Bun.
+- **Omit** `typecheck` or `bun test` lines if `package.json` lacks those scripts; tell the user.
+
+## `.lintstagedrc` (JSON)
+```json
+{
+  "*": "prettier --ignore-unknown --write"
+}
+```
+
+## `.prettierrc` (only if no Prettier config exists)
+```json
+{
+  "useTabs": false,
+  "tabWidth": 2,
+  "printWidth": 80,
+  "singleQuote": false,
+  "trailingComma": "es5",
+  "semi": true,
+  "arrowParens": "always"
+}
+```
+
+## VERIFY
+- `.husky/pre-commit` exists (executable on Unix; Windows relies on Husky runner).
+- `.lintstagedrc` exists; `prepare` script present.
+- Run `bunx lint-staged` once (with staged files) as smoke test.
+
+## COMMIT
+- Suggested message: `chore: add pre-commit hooks (husky + lint-staged + prettier)`
+
+## OPTIONAL GLOBS (project rules only)
+- If this rule is copied to `<project>/.cursor/rules/`, you may add `globs: package.json` or `.husky/**` so it attaches when editing hook config.
+
+## NOTES
+- `prettier --ignore-unknown` skips unsupported files.
+- Order: lint-staged first (fast, staged only), then full typecheck/tests per testing.mdc expectations.

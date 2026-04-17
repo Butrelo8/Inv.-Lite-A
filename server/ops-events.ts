@@ -44,9 +44,6 @@ export async function ensureOpsEventsTable(): Promise<void> {
 export async function emitOpsEvent(input: EmitOpsEventInput): Promise<void> {
   if (process.env.NODE_ENV === "test") return;
   try {
-    // #region agent log
-    fetch('http://127.0.0.1:7810/ingest/124a1cb1-6e13-41d5-98f5-ef3dbb7726dd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d2f11e'},body:JSON.stringify({sessionId:'d2f11e',runId:'initial',hypothesisId:'H1',location:'server/ops-events.ts:20',message:'emitOpsEvent called',data:{eventType:input.eventType,severity:input.severity,source:input.source ?? "api"},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     await storage.addOpsEvent({
       eventType: input.eventType,
       severity: input.severity,
@@ -60,9 +57,6 @@ export async function emitOpsEvent(input: EmitOpsEventInput): Promise<void> {
       method: input.method ?? null,
     });
   } catch (err) {
-    // #region agent log
-    fetch('http://127.0.0.1:7810/ingest/124a1cb1-6e13-41d5-98f5-ef3dbb7726dd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d2f11e'},body:JSON.stringify({sessionId:'d2f11e',runId:'initial',hypothesisId:'H1',location:'server/ops-events.ts:34',message:'emitOpsEvent failed',data:{eventType:input.eventType,error:err instanceof Error ? err.message : String(err)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     // Never break request flow if observability recording fails.
     console.error("Failed to emit ops event", input.eventType, err);
   }

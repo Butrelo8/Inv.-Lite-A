@@ -1,0 +1,51 @@
+---
+description: Tech stack preferences and conventions for full stack + infrastructure work
+alwaysApply: true
+---
+
+## LANGUAGE & TYPING
+- TypeScript over JavaScript always — strict mode enabled, no `any` without justification
+
+## PREFERRED STACK (suggest these before alternatives)
+- Frontend: Next.js (apps/dashboards) or Astro (landing/content)
+- Backend: Hono over Express or Fastify — TypeScript-native, edge-ready
+- Runtime: Bun over Node when possible
+- Database: PostgreSQL + Drizzle ORM
+- Auth: Clerk — never roll your own
+- Payments: Stripe — use webhook handlers with idempotency keys always
+
+## PATTERNS
+- Functional patterns preferred over classes where it makes sense
+- Typed errors — never swallow exceptions silently, always log or propagate
+- Named exports over default exports (easier to refactor and search)
+- Barrel files (index.ts) only when the module surface is stable
+
+## BACKEND
+- REST APIs: consistent error response shape across all endpoints
+- Validate request inputs at the route handler level before business logic
+- Database: parameterized queries always, never string interpolation in SQL
+- Migrations: always reversible, never destructive without explicit backup step
+- Stripe webhooks: always verify signature, always return 200 before processing
+
+## DOCKER & INFRA
+- No root in containers — always use a non-root user
+- Multi-stage builds to keep images small
+- .dockerignore always present — use the project's existing 
+- .dockerignore, never create one from scratch
+- Environment variables via .env or secrets manager, never hardcoded
+- Idempotent scripts — running twice should not break anything
+- Dry-run flags on destructive scripts
+
+## FRONTEND
+- CSS: use variables for colors, spacing, and typography
+- No inline styles unless dynamically computed
+- Accessible by default — semantic HTML, alt text, keyboard navigation
+
+## DEPLOY GUIDANCE (default picks)
+- Backend: Railway (fast MVP) or Render (stable pricing); Coolify if you already have a VPS you manage.
+- Frontend: Vercel for Next.js; Netlify for Astro/other non-Next static/content stacks.
+
+## QUICK STACK REASONING (why this default set)
+- Prefer frameworks that minimize TypeScript impedance mismatch: Hono + Bun keeps the stack “type-native”.
+- Prefer data tooling that produces readable SQL: PostgreSQL + Drizzle keeps queries understandable and maintainable.
+- Prefer managed auth and payments: Clerk and Stripe reduce time-to-correctness, especially around edge cases and security boundaries.

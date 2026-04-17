@@ -14,6 +14,7 @@ export interface InventoryFilters {
   category?: string;
   responsible?: string;
   companyId?: number;
+  siteId?: number;
   dateFrom?: string;
   dateTo?: string;
   addedAfter?: string;
@@ -27,13 +28,14 @@ export function useInventory(filters?: InventoryFilters | string, options?: { en
   const limit = f.limit ?? 50;
   const offset = f.offset ?? 0;
   return useQuery({
-    queryKey: [api.inventory.list.path, f.search, f.category, f.responsible, f.companyId, f.dateFrom, f.dateTo, f.addedAfter, f.modifiedAfter, limit, offset],
+    queryKey: [api.inventory.list.path, f.search, f.category, f.responsible, f.companyId, f.siteId, f.dateFrom, f.dateTo, f.addedAfter, f.modifiedAfter, limit, offset],
     queryFn: async () => {
       const url = new URL(api.inventory.list.path, window.location.origin);
       if (f.search) url.searchParams.set("search", f.search);
       if (f.category) url.searchParams.set("category", f.category);
       if (f.responsible) url.searchParams.set("responsible", f.responsible);
       if (f.companyId != null) url.searchParams.set("companyId", String(f.companyId));
+      if (f.siteId != null) url.searchParams.set("siteId", String(f.siteId));
       if (f.dateFrom) url.searchParams.set("dateFrom", f.dateFrom);
       if (f.dateTo) url.searchParams.set("dateTo", f.dateTo);
       if (f.addedAfter) url.searchParams.set("addedAfter", f.addedAfter);
@@ -48,13 +50,14 @@ export function useInventory(filters?: InventoryFilters | string, options?: { en
   });
 }
 
-export function useSuggestCode(category: string, name: string, enabled: boolean) {
+export function useSuggestCode(category: string, name: string, enabled: boolean, siteId?: number) {
   return useQuery({
-    queryKey: ["/api/inventory/suggest-code", category, name],
+    queryKey: ["/api/inventory/suggest-code", category, name, siteId],
     queryFn: async () => {
       const url = new URL("/api/inventory/suggest-code", window.location.origin);
       url.searchParams.set("category", category);
       url.searchParams.set("name", name);
+      if (siteId != null) url.searchParams.set("siteId", String(siteId));
       const res = await fetch(url.toString(), { credentials: "include" });
       if (!res.ok) throw new Error("Failed to suggest code");
       const data = (await res.json()) as { code: string };
@@ -64,11 +67,13 @@ export function useSuggestCode(category: string, name: string, enabled: boolean)
   });
 }
 
-export function useFilterOptions() {
+export function useFilterOptions(siteId?: number) {
   return useQuery({
-    queryKey: ["/api/inventory/filters"],
+    queryKey: ["/api/inventory/filters", siteId],
     queryFn: async () => {
-      const res = await fetch("/api/inventory/filters", { credentials: "include" });
+      const url = new URL("/api/inventory/filters", window.location.origin);
+      if (siteId != null) url.searchParams.set("siteId", String(siteId));
+      const res = await fetch(url.toString(), { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch filters");
       return res.json() as Promise<{ categories: string[]; responsible: string[]; companies: { id: number; name: string }[] }>;
     },

@@ -1,0 +1,88 @@
+---
+description: Project documentation and knowledge management rules
+alwaysApply: true
+---
+
+## PROJECT FILES (maintain these always)
+Every project must have these files at root level.
+Create them if they don't exist:
+- TODOS.md — pending tasks (use gstack TODOS format)
+- CHANGELOG.md — version history, updated on every ship
+- DECISIONS.md — architectural decisions and why
+- BUGS.md — known bugs and workarounds
+
+## DECISIONS.md — UPDATE AUTOMATICALLY
+When ANY of these happen, add an entry to DECISIONS.md without being asked:
+- A library or framework is chosen over alternatives
+- An architectural pattern is selected
+- A workaround is implemented for a known limitation
+- A previous decision is reversed or changed
+
+Format:
+## YYYY-MM-DD — Title of decision
+**Context:** Why this decision was needed
+**Decision:** What was chosen
+**Alternatives considered:** What else was evaluated
+**Why not the others:** Concrete reason
+
+## BUGS.md — UPDATE AUTOMATICALLY
+When a bug is found but not fixed immediately, add it to BUGS.md:
+- Known issue with workaround
+- Environment-specific behavior
+- Third-party limitations
+
+Format:
+## [BUG] Title
+**Description:** What happens and when
+**Workaround:** How to work around it in the meantime
+**Status:** pending / in progress / blocked
+**Reported:** YYYY-MM-DD
+
+## TODOS.md — FOLLOW GSTACK FORMAT
+Use the following format for all entries — never add vague bullet points:
+
+### Title
+**What:** One-line description of the work
+**Why:** The concrete problem it solves or value it unlocks
+**Context:** Enough detail that someone picking this up in 3 months understands
+**Solution:** The approach or implementation path decided (or "TBD")
+**Effort:** S / M / L / XL
+**Priority:** P0 / P1 / P2 / P3 / P4
+**Depends on:** Prerequisites or "None"
+**Done When:** Specific, observable conditions that mark this complete
+
+Priority definitions:
+- P0 — Blocking: must be done before next release
+- P1 — Critical: should be done this cycle
+- P2 — Important: do when P0/P1 are clear
+- P3 — Nice-to-have: revisit after adoption/usage data
+- P4 — Someday: good idea, no urgency
+
+## CHANGELOG.md — UPDATE AUTOMATICALLY
+Update CHANGELOG.md without being asked whenever:
+- A new feature is added
+- Existing behavior is changed
+- A bug is fixed
+- A file or module is removed or renamed
+
+Always add to [Unreleased] section during development.
+Only bump version number when explicitly asked to ship.
+
+## [version] - YYYY-MM-DD
+### Added
+- New features
+
+### Changed
+- Changes to existing functionality
+
+### Fixed
+- Bug fixes
+
+### Removed
+- Removed features or deprecated items
+
+## STARTER KIT
+When initializing a new backend project:
+- Use github.com/Butrelo8/hono-template as base structure
+- Copy .env.example and ask user to fill values before starting
+- Never create a backend project structure from scratch

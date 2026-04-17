@@ -1,0 +1,85 @@
+---
+description: Frontend patterns - UI async states, cancellation, React/Astro conventions
+globs: "**/*.tsx,**/*.jsx,**/*.astro"
+alwaysApply: false
+---
+
+# Frontend Async UI (Pessimistic States)
+
+Use this rule whenever you create / scaffold / implement **new async UI/data-fetching logic** in frontends (components, hooks, client calls, UI server components that render async results, etc.).
+
+## Required UI States (ALWAYS scaffold all four)
+Render these states by default, in this order:
+1. **LOADING**: show a `Skeleton` component (never a spinner string, never `return null` for loading).
+2. **ERROR**: show an inline error component/message with visible and accessible error text (e.g. `role="alert"`).
+3. **EMPTY**: render an explicit empty/null state (do not assume data always exists).
+4. **SUCCESS**: render the happy path last.
+
+Even for “simple” requests: keep the code minimal, but never omit any state.
+
+## Stack Conventions (enforce)
+- Prefer TanStack Query: use `useQuery` / `useMutation` instead of `fetch` + `useEffect`.
+- Avoid `useEffect` for data fetching unless there is truly no alternative.
+- If `useEffect` is unavoidable for async work:
+  - Use an `AbortController` (or equivalent) and wire its signal into the request.
+  - Add cleanup via `return () => { abort }` to prevent stale state updates on unmount.
+
+## Escape Hatches (avoid churn)
+- If TanStack Query is not present/available in the target repo:
+  - Scaffold the same four states (loading/error/empty/success).
+  - Use the safest existing async pattern in that repo, while still enforcing cancellation/cleanup on unmount for any `useEffect`-driven async work.
+
+## Skeleton Guidance
+- Use the project’s existing `Skeleton` component (design system / shadcn / etc.).
+- If no `Skeleton` exists yet in the repo context, generate a minimal local `Skeleton` component only as a temporary placeholder and clearly comment that it should be replaced with the real one when available.
+
+## React / Cancellation Guardrails
+- Race condition cleanup is required: ignore stale responses after unmount/cancellation.
+- Cancelled requests must not update state after cancellation/unmount.
+
+---
+
+# Advice (Happy Path Review for async UI) — Informational Only
+
+Use this when reviewing or refactoring existing async UI code that might only work when everything goes right.
+
+This is **INFORMATIONAL ONLY**:
+- Do NOT treat findings as merge blockers.
+- Provide recommended fixes and guidance, but do not override other ship/pre-landing gates.
+
+## Required Async UI State Checklist (per operation)
+For each operation, verify these are handled:
+- Loading state is shown to the user (use a `Skeleton` component).
+- Error state is handled (inline error or an Error boundary).
+- Empty/null state is guarded before rendering.
+- Success state renders correctly after successful data load.
+- Race condition cleanup exists:
+  - If using `useEffect` for async work: ensure cleanup via `return () => ...` and prevent stale state updates.
+  - If using fetch: use `AbortController` where applicable.
+- Cancelled requests are handled:
+  - Ignore stale responses after unmount or cancellation.
+  - Ensure state updates do not occur when the request is cancelled/unmounted.
+
+## Stack Conventions to Flag (advice)
+- raw `fetch` + `useEffect` instead of `useQuery` / `useMutation`:
+  - Advise migration to `useQuery` if it fits the codebase pattern.
+- unsafe nested property reads:
+  - Flag patterns like `user.name` without null guards (`user?.name` / `if (!user) return ...`).
+- `useEffect` without cleanup for async work:
+  - Flag as a race-condition risk (stale updates on unmount).
+
+## Output Format (mandatory)
+For each issue found:
+1. `File:Line` (use the relevant file line you observed)
+2. **What’s wrong**
+3. **Production-ready fix snippet** (minimal-diff snippet scoped to the operation)
+
+If all checks pass:
+- Explicitly say it passes.
+- Briefly explain why (which required UI states/patterns were satisfied).
+
+## CSS & Accessibility (Frontend defaults)
+- Use CSS variables for colors/spacing/typography.
+- No inline styles unless dynamically computed.
+- Semantic HTML, `alt` text, and keyboard/navigation-safe UI by default.
+

@@ -13,10 +13,12 @@ export function inventoryItemToDuplicateCreateBody(item: InventoryItem): InsertI
     size: item.size ?? undefined,
     units: item.units ?? 0,
     condition: item.condition ?? undefined,
-    purchaseDate: item.purchaseDate ?? undefined,
+    purchaseDate: item.purchaseDate ? item.purchaseDate : undefined,
     responsible: item.responsible ?? undefined,
     usefulLife: item.usefulLife ?? undefined,
     category: item.category ?? undefined,
+    companyId: item.companyId ?? undefined,
+    siteId: item.siteId,
     // Intentionally do not copy notes/images/attachments.
   };
 }

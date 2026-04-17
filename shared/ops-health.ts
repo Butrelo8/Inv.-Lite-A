@@ -45,6 +45,9 @@ export interface OpsSummaryResponse {
     rateLimitHits24h: number;
     csrfBlocks24h: number;
     backupSuccessRate7d: number | null;
+    restoreVerificationSuccessRate7d: number | null;
+    restoreVerificationPassCount7d: number;
+    restoreVerificationFailCount7d: number;
     integrityScanSuccessRate7d: number | null;
     integrityScanIssuesLastRun: number | null;
     historyWriteSuccessRate24h: number;

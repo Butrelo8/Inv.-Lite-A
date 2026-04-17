@@ -1,0 +1,53 @@
+{
+  "ok": true,
+  "scanId": "integrity_scan_2026-04-09T17-00-57-930Z",
+  "startedAt": "2026-04-09T17:00:57.930Z",
+  "finishedAt": "2026-04-09T17:00:57.969Z",
+  "durationSec": 0,
+  "summary": {
+    "totalFindings": 5,
+    "totalIssues": 0
+  },
+  "findings": [
+    {
+      "id": "orphan_inventory_attachments",
+      "title": "Orphan inventory attachments",
+      "ok": true,
+      "count": 0,
+      "sample": [],
+      "details": "Attachments that reference a missing inventory item."
+    },
+    {
+      "id": "orphan_shared_notes",
+      "title": "Orphan shared notes",
+      "ok": true,
+      "count": 0,
+      "sample": [],
+      "details": "Shared notes that reference a missing inventory item."
+    },
+    {
+      "id": "orphan_employee_documents",
+      "title": "Orphan employee document links",
+      "ok": true,
+      "count": 0,
+      "sample": [],
+      "details": "Employee documents linked to a missing inventory item."
+    },
+    {
+      "id": "history_fk_drift",
+      "title": "History foreign-key drift",
+      "ok": true,
+      "count": 0,
+      "sample": [],
+      "details": "History entries whose product/user/company references no longer exist."
+    },
+    {
+      "id": "missing_files_for_db_references",
+      "title": "DB-referenced files missing on disk",
+      "ok": true,
+      "count": 0,
+      "sample": [],
+      "details": "Rows reference file paths that are not present in local storage."
+    }
+  ]
+}

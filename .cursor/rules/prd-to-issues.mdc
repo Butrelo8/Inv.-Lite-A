@@ -1,0 +1,50 @@
+---
+description: Break a PRD into vertical-slice GitHub issues (tracer bullets, HITL/AFK). Use when converting a PRD to tickets, implementation issues, or work breakdown.
+alwaysApply: false
+---
+
+## PRD TO ISSUES — WORKFLOW
+
+### Locate the PRD
+- Ask for the PRD GitHub issue number or URL.
+- If not in context, fetch via **GitHub MCP** (preferred) or `gh issue view <n>` including comments.
+
+### Explore the codebase (optional)
+- If needed, explore the repo to ground slices in reality.
+
+### Draft vertical slices
+- Each issue is a **thin vertical slice** through all layers end-to-end (schema, API, UI, tests) — **not** a horizontal layer-only task.
+- Slices may be **HITL** (needs human decision/review) or **AFK** (agent can implement without blocking human steps). Prefer AFK when safe.
+- Each completed slice is demoable or verifiable alone. Prefer many thin slices over few thick ones.
+
+### Quiz the user
+- Present a numbered list. Per slice: **Title**, **Type** (HITL/AFK), **Blocked by** (other slices), **User stories covered** (from PRD).
+- Ask: granularity OK? Dependencies correct? Merge/split? HITL/AFK labels right? Iterate until approved.
+
+### Create GitHub issues
+- Create via **GitHub MCP** in dependency order (blockers first) so real issue numbers appear in "Blocked by".
+- **Do not** close or modify the parent PRD issue.
+
+### Issue body template
+
+```text
+## Parent PRD
+#<parent-issue-number>
+
+## What to build
+(End-to-end behavior for this slice. Point to PRD sections; do not paste the whole PRD.)
+
+## Acceptance criteria
+- [ ] Criterion 1
+- [ ] Criterion 2
+- [ ] Criterion 3
+
+## Blocked by
+- #<issue> (or "None — can start immediately")
+
+## User stories addressed
+- User story N from parent PRD
+```
+
+## PROJECT ALIGNMENT
+- In-repo task tracking may also use **TODOS.md** (docs.mdc). GitHub issues remain the source for cross-repo collaboration when used.

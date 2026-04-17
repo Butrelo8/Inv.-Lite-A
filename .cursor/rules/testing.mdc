@@ -1,0 +1,27 @@
+---
+description: Testing standards and non-negotiable test coverage rules
+alwaysApply: true
+---
+
+## TESTING — NON-NEGOTIABLE
+- Every new function or feature needs at least one test — no exceptions
+- Test negative paths and edge cases, not just the happy path
+- For new API endpoints: test auth failure, validation errors, and success
+- For new UI flows: test empty state, error state, and success state
+- Never suggest merging or committing code with failing tests
+- Prefer integration tests over unit tests for critical paths
+- Mock external services — tests must not depend on network or third-party APIs
+- Test file naming: `*.test.ts` or `*.spec.ts` co-located with the source file
+
+## Bun Test Runner Defaults
+- Use `bun test` as the standard command in this workflow.
+- Keep tests deterministic: no time-based flakiness, and prefer explicit test fixtures.
+
+## Playwright for End-to-End (Frontend) Flows
+- Use Playwright for E2E flows that cross UI + backend boundaries (auth flows, onboarding, checkout).
+- For third-party integrations (auth/providers/payments), mock or use test modes so tests are repeatable and offline-safe.
+
+## Database Isolation
+- Test DB state should be isolated per test:
+  - Prefer transactions/rollbacks for integration tests when possible.
+  - Ensure tests do not rely on execution order or leftover seed data.

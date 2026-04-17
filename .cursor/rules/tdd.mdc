@@ -1,0 +1,84 @@
+---
+description: Test-driven development — red-green-refactor, vertical slices, behavior-focused tests. Use when the user wants TDD, test-first development, red-green-refactor, or tracer-bullet tests.
+alwaysApply: false
+---
+
+## TDD — BASELINE
+- **testing.mdc** is authoritative for: every new feature needs tests, `bun test`, integration bias for critical paths, mocking **external** services, Playwright E2E, DB isolation, `*.test.ts` / `*.spec.ts` naming.
+- This rule adds the **TDD workflow** and **behavior vs implementation** framing only.
+
+## PHILOSOPHY
+- Tests prove behavior through **public interfaces**, not implementation details. Refactors can rewrite internals; tests should still pass if behavior is unchanged.
+- Good tests read like specs: *"user can checkout with valid cart"* — **what** the system does, not **how**.
+- Bad tests: mock internal collaborators, test private methods, assert call order/count, break when you rename an internal helper though behavior is unchanged.
+
+## ANTI-PATTERN — HORIZONTAL SLICES
+- **Never** write all tests first then all implementation (RED = bulk tests, GREEN = bulk code).
+- That yields tests of imagined behavior, brittle structure, and weak signal.
+- **Do** vertical slices (tracer bullets): one failing test → minimal code to pass → repeat.
+
+```text
+WRONG (horizontal):  RED: t1,t2,t3  then  GREEN: i1,i2,i3
+RIGHT (vertical):    RED→GREEN: t1→i1, then t2→i2, ...
+```
+
+## WORKFLOW
+
+### Planning (before code)
+- Confirm public interface changes and which behaviors matter most (you cannot test everything).
+- Look for deep modules (small API, rich behavior) and testability at boundaries.
+- List behaviors to test (not implementation steps). Get user approval.
+
+### Tracer bullet
+- **RED**: one test, one behavior → fails.
+- **GREEN**: smallest change → passes.
+
+### Incremental loop
+- **RED** next test → **GREEN** minimal pass. One test at a time; no speculative features.
+
+### Refactor
+- Only when **GREEN**. Extract duplication, deepen modules, run `bun test` after each refactor step.
+- **Never refactor while RED.**
+
+## CHECKLIST — EACH CYCLE
+- Test describes behavior, uses public API only, would survive internal refactor.
+- Code is minimal for this test; no speculative features.
+
+## MOCKING (BOUNDARIES ONLY)
+- Mock at **system boundaries**: external APIs (payments, email), time/randomness, filesystem (sometimes), DB (prefer test DB / transactions per testing.mdc).
+- Do **not** mock your own modules/classes or internal collaborators.
+- Prefer **dependency injection** at boundaries (pass `paymentClient` in; do not construct Stripe inside core logic).
+- Prefer **SDK-style** narrow functions per operation over one generic `fetch(url)` — easier to mock and type.
+
+## EXAMPLES (TypeScript + bun test)
+
+```typescript
+// GOOD — behavior through public API
+test("user can checkout with valid cart", async () => {
+  const cart = createCart();
+  cart.add(product);
+  const result = await checkout(cart, paymentMethod);
+  expect(result.status).toBe("confirmed");
+});
+
+// BAD — spies on internal collaborators instead of user-visible outcome
+test("checkout calls paymentService.process", async () => {
+  // ... mock/spy on paymentService.process ...
+  await checkout(cart, payment);
+  // ... assert call args / call count ...
+});
+
+// BAD — bypass public API
+test("createUser saves to database", async () => {
+  await createUser({ name: "Alice" });
+  const row = await db.query("SELECT * FROM users WHERE name = ?", ["Alice"]);
+  expect(row).toBeDefined();
+});
+
+// GOOD — verify via interface
+test("createUser makes user retrievable", async () => {
+  const user = await createUser({ name: "Alice" });
+  const retrieved = await getUser(user.id);
+  expect(retrieved.name).toBe("Alice");
+});
+```

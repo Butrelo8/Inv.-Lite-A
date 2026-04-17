@@ -1,0 +1,48 @@
+---
+description: Plan a refactor via interview, tiny safe commits, file as GitHub issue. Use when the user wants a refactor plan, RFC, or incremental refactor breakdown.
+alwaysApply: false
+---
+
+## REQUEST REFACTOR PLAN — WORKFLOW
+- Skip steps when unnecessary; default is thorough.
+- **core.mdc** governs no drive-by reformatting and minimal diff during implementation.
+- **code-quality.mdc** governs commit hygiene when executing the plan.
+
+## STEPS
+1. Ask for a detailed problem description and candidate solutions.
+2. Explore the repo to verify and map current code.
+3. Ask what else was considered; offer alternatives.
+4. Interview deeply on intended implementation.
+5. Nail scope: what changes, what explicitly does not.
+6. Check test coverage for the area. If weak, agree testing approach with the user (see testing.mdc / tdd.mdc).
+7. Break work into **the smallest commits** that each leave the repo working (Fowler: smallest safe steps).
+8. File the plan as a **GitHub issue** via **GitHub MCP** (preferred) or `gh issue create`.
+
+## ISSUE TEMPLATE
+
+```text
+## Problem Statement
+(Developer-facing problem.)
+
+## Solution
+(Chosen direction from developer perspective.)
+
+## Commits
+(Long, ordered list: each step is a tiny commit; each leaves the codebase working.)
+
+## Decision Document
+- Modules/interfaces affected
+- Technical clarifications
+- Architecture, schema, API contracts, interactions
+(No file paths or code snippets — they go stale. Mirror significant items in DECISIONS.md when the project uses it — docs.mdc.)
+
+## Testing Decisions
+- What "good test" means (public behavior, not internals)
+- What gets tested
+- Prior art in repo
+
+## Out of Scope
+(Explicit exclusions.)
+
+## Further Notes (optional)
+```

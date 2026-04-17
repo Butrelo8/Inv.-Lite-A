@@ -108,7 +108,7 @@ export function ItemLabelDialog({ item, open, onOpenChange }: ItemLabelDialogPro
     w.focus();
     w.onload = () => {
       w.print();
-      w.afterprint = () => w.close();
+      w.onafterprint = () => w.close();
     };
     // Fallback if afterprint not supported
     setTimeout(() => {

@@ -101,6 +101,15 @@ export default function OpsHealth() {
           <CardContent className="text-2xl font-semibold">{pct(kpis?.backupSuccessRate7d)}</CardContent>
         </Card>
         <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">Restore Verify Success (7d)</CardTitle></CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold">{pct(kpis?.restoreVerificationSuccessRate7d)}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              Pass: {num(kpis?.restoreVerificationPassCount7d ?? 0)} · Fail: {num(kpis?.restoreVerificationFailCount7d ?? 0)}
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm">Integrity Scan Success (7d)</CardTitle></CardHeader>
           <CardContent className="text-2xl font-semibold">{pct(kpis?.integrityScanSuccessRate7d)}</CardContent>
         </Card>

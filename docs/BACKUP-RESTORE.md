@@ -155,6 +155,12 @@ Default output location:
 
 - `reports/integrity/` under repository root (override with `INTEGRITY_REPORT_DIR`).
 
+To **clear stale file references** after you have ruled out restore (inventory primary images set to `NULL`, missing attachment rows removed, optional employee document rows deleted), run:
+
+- `npm run integrity:clear-stale-refs` — dry-run (counts + sample paths)
+- `npm run integrity:clear-stale-refs -- --apply` — fix inventory items + attachments only
+- add `--include-employee-documents` with `--apply` to also delete `employee_documents` rows whose files are missing
+
 Optional env flags:
 
 - `INTEGRITY_REPORT_DIR=<path>` for custom report output folder.
