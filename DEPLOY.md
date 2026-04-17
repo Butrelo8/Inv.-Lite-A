@@ -41,6 +41,13 @@ If you use Docker Compose, start the stack and then run `npm run db:push` with `
 After changing application code:
 - `docker compose up -d --build app`
 
+Responsiva DOCX template in Docker:
+- Set `RESPONSIVA_TEMPLATE_PATH=/app/src/templates/responsiva_template.docx` in `app.environment`.
+- Mount template directory read-only in `app.volumes`:
+  - `./client/src/templates:/app/src/templates:ro`
+- Verify file exists in container:
+  - `docker compose exec app ls -la /app/src/templates`
+
 ---
 
 ## 4) Post-deploy verification checklist
