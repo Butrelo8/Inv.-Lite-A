@@ -1,0 +1,12 @@
+i'm working on a feature for this app, but before creating a plan i want you to change this [Photo table rules:
+- 3 images per row maximum
+- Table width: 9360 DXA (full content width for US Letter with 1" margins)
+- Each cell width: 3120 DXA
+- No visible borders on any cell
+- Each image size: cx="2800000" cy="3800000" EMUs (portrait format)
+- Images centered horizontally in their cells
+- If images don't fill the last row, add empty cells to complete the row] to     
+something like a code logic for creating the tables where the images are pasted on, it has to depend on the number of photos/ the item has, it can have multiple photos.The DB table where the inventory_attachments (photos) are stored has a   
+  column for "id, "item_id" and "image_url", the template is at /Users/trelo/Documents/Proyectos PP/Inventario Lite            
+  A/src/templates/responsiva_template.docx and the table that i want you to do the logc on is located at the placeholder       
+  {{FOTOS}}.  This is part of the prompt so no code changes still     

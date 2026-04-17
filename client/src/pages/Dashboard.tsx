@@ -59,11 +59,12 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { useSites } from "@/hooks/use-sites";
-import { Plus, Edit2, Trash2, Copy, Package, FilterX, Loader2, Download, Upload, ImageIcon, ChevronDown, ChevronUp, ChevronsUpDown, FileSpreadsheet, FileText, Columns3, QrCode, ChevronLeft, ChevronRight, X, Eye, UserPlus, Undo2, BarChart3, Wrench, MapPin } from "lucide-react";
+import { Plus, Edit2, Trash2, Copy, Package, FilterX, Loader2, Download, Upload, ImageIcon, ChevronDown, ChevronUp, ChevronsUpDown, FileSpreadsheet, FileText, Columns3, QrCode, ChevronLeft, ChevronRight, X, Eye, UserPlus, Undo2, BarChart3, Wrench, MapPin, FileDown } from "lucide-react";
 import { format } from "date-fns";
 import { categoryToDisplay, conditionToDisplay } from "@/lib/category-translate";
 import { SUGGESTED_CATEGORIES } from "@/lib/category-suggest";
 import { inventoryItemToDuplicateCreateBody } from "@/lib/inventory-duplicate";
+import { downloadResponsiva } from "@/lib/download-responsiva";
 
 const BASE_CATEGORIES = [...SUGGESTED_CATEGORIES, "Office Supplies"];
 const CONDITIONS = ["New", "Excellent", "Good", "Fair", "Poor", "Damaged"];
@@ -1980,6 +1981,30 @@ export default function Dashboard() {
                             title="Editar"
                           >
                             <Edit2 className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 hover:text-primary hover:bg-primary/10"
+                            onClick={async () => {
+                              try {
+                                await downloadResponsiva({
+                                  itemId: item.id,
+                                  itemCode: item.code,
+                                  responsible: item.responsible,
+                                });
+                              } catch (err) {
+                                toast({
+                                  title: "Error",
+                                  description:
+                                    err instanceof Error ? err.message : "No se pudo generar la responsiva",
+                                  variant: "destructive",
+                                });
+                              }
+                            }}
+                            title="Generar Responsiva"
+                          >
+                            <FileDown className="w-4 h-4" />
                           </Button>
                           <Button
                             variant="ghost"
