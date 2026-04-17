@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, date, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, date, timestamp, jsonb, index, uniqueIndex, boolean } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -28,24 +28,87 @@ export const companies = pgTable("companies", {
 
 export type Company = typeof companies.$inferSelect;
 
-export const inventoryItems = pgTable("inventory_items", {
+/** Physical / logical location. Optional company_id aligns rollup with inventory_items.company_id when both are set. */
+export const sites = pgTable(
+  "sites",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").unique(),
+    companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    archivedAt: timestamp("archived_at"),
+  },
+  (table) => ({
+    companyIdx: index("sites_company_id_idx").on(table.companyId),
+  })
+);
+
+export type Site = typeof sites.$inferSelect;
+
+/**
+ * Seeded presets for per-site RBAC (`user_site_roles`), enabled with SITE_RBAC_ENABLED + SITE_SCOPING_ENABLED.
+ * Capabilities are documented in `shared/site-rbac.ts`.
+ */
+export const roleTemplates = pgTable("role_templates", {
   id: serial("id").primaryKey(),
-  code: text("code").notNull(),
-  name: text("name").notNull(), // Artículo / Descripción
-  serialNumber: text("serial_number"),
-  size: text("size"),
-  units: integer("units").notNull().default(0),
-  condition: text("condition"), // Estado
-  purchaseDate: date("purchase_date"), // Fecha de Compra
-  responsible: text("responsible"),
-  usefulLife: text("useful_life"),
-  category: text("category"), // Added based on requirement for categories
-  imageUrl: text("image_url"), // Primary/thumbnail image (first or selected)
-  companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
-  notes: text("notes"), // Observaciones / comentarios internos, mantenimiento, etc.
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at"),
+  key: text("key").notNull().unique(),
+  displayName: text("display_name").notNull(),
+  capabilities: jsonb("capabilities").notNull().$type<string[]>(),
 });
+
+export type RoleTemplate = typeof roleTemplates.$inferSelect;
+
+export const userSiteRoles = pgTable(
+  "user_site_roles",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    siteId: integer("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "cascade" }),
+    templateId: integer("template_id")
+      .notNull()
+      .references(() => roleTemplates.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userSiteUnique: uniqueIndex("user_site_roles_user_site_idx").on(table.userId, table.siteId),
+    userSiteRolesUserIdIdx: index("user_site_roles_user_id_idx").on(table.userId),
+  })
+);
+
+export type UserSiteRole = typeof userSiteRoles.$inferSelect;
+
+export const inventoryItems = pgTable(
+  "inventory_items",
+  {
+    id: serial("id").primaryKey(),
+    code: text("code").notNull(),
+    name: text("name").notNull(), // Artículo / Descripción
+    serialNumber: text("serial_number"),
+    size: text("size"),
+    units: integer("units").notNull().default(0),
+    condition: text("condition"), // Estado
+    purchaseDate: date("purchase_date"), // Fecha de Compra
+    responsible: text("responsible"),
+    usefulLife: text("useful_life"),
+    category: text("category"), // Added based on requirement for categories
+    imageUrl: text("image_url"), // Primary/thumbnail image (first or selected)
+    companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    siteId: integer("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "restrict" }),
+    notes: text("notes"), // Observaciones / comentarios internos, mantenimiento, etc.
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at"),
+  },
+  (table) => ({
+    siteIdx: index("inventory_items_site_id_idx").on(table.siteId),
+  })
+);
 
 export const inventoryAttachments = pgTable("inventory_attachments", {
   id: serial("id").primaryKey(),
@@ -53,11 +116,16 @@ export const inventoryAttachments = pgTable("inventory_attachments", {
   imageUrl: text("image_url").notNull(),
 });
 
-export const insertInventoryItemSchema = createInsertSchema(inventoryItems).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
+export const insertInventoryItemSchema = createInsertSchema(inventoryItems)
+  .omit({
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+  })
+  .extend({
+    /** Omitted on create/import when server assigns default site (see SITE_SCOPING_ENABLED). */
+    siteId: z.number().int().positive().optional(),
+  });
 
 export const insertAttachmentSchema = createInsertSchema(inventoryAttachments).omit({ id: true });
 
@@ -192,10 +260,148 @@ export type InventoryAssignment = typeof inventoryAssignments.$inferSelect;
 /** Canonical label when an asset has no active assignee (see DECISIONS.md). */
 export const UNASSIGNED_RESPONSIBLE_LABEL = "Sin asignar" as const;
 
+export const MAINTENANCE_SCHEDULE_TYPES = ["maintenance", "calibration"] as const;
+export type MaintenanceScheduleType = (typeof MAINTENANCE_SCHEDULE_TYPES)[number];
+
+export const maintenanceSchedules = pgTable(
+  "maintenance_schedules",
+  {
+    id: serial("id").primaryKey(),
+    itemId: integer("item_id")
+      .notNull()
+      .references(() => inventoryItems.id, { onDelete: "cascade" }),
+    scheduleType: text("schedule_type").notNull(),
+    title: text("title").notNull(),
+    intervalDays: integer("interval_days").notNull(),
+    startDate: date("start_date").notNull(),
+    nextDueAt: date("next_due_at").notNull(),
+    notes: text("notes"),
+    active: boolean("active").notNull().default(true),
+    createdByUserId: integer("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }),
+  },
+  (table) => ({
+    activeTypeUnique: uniqueIndex("maintenance_schedules_item_type_active_idx")
+      .on(table.itemId, table.scheduleType)
+      .where(sql`${table.active} = true`),
+    nextDueIdx: index("maintenance_schedules_next_due_idx").on(table.nextDueAt),
+  })
+);
+
+export const maintenanceEvents = pgTable(
+  "maintenance_events",
+  {
+    id: serial("id").primaryKey(),
+    scheduleId: integer("schedule_id")
+      .notNull()
+      .references(() => maintenanceSchedules.id, { onDelete: "cascade" }),
+    performedAt: date("performed_at").notNull(),
+    conditionResult: text("condition_result"),
+    notes: text("notes").notNull(),
+    evidenceUrl: text("evidence_url"),
+    completedByUserId: integer("completed_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    scheduleIdx: index("maintenance_events_schedule_idx").on(table.scheduleId, table.performedAt),
+  })
+);
 export type InventoryItem = typeof inventoryItems.$inferSelect;
 export type InventoryAttachment = typeof inventoryAttachments.$inferSelect;
 export type InsertInventoryItem = z.infer<typeof insertInventoryItemSchema>;
 export type OpsEvent = typeof opsEvents.$inferSelect;
+export type MaintenanceSchedule = typeof maintenanceSchedules.$inferSelect;
+export type MaintenanceEvent = typeof maintenanceEvents.$inferSelect;
 
 export type CreateItemRequest = InsertInventoryItem;
 export type UpdateItemRequest = Partial<InsertInventoryItem>;
+
+export const webhookEndpoints = pgTable("webhook_endpoints", {
+  id: serial("id").primaryKey(),
+  url: text("url").notNull(),
+  secret: text("secret").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  eventTypes: jsonb("event_types").notNull().$type<string[]>(),
+  createdByUserId: integer("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const webhookOutbox = pgTable(
+  "webhook_outbox",
+  {
+    id: serial("id").primaryKey(),
+    eventId: text("event_id").notNull(),
+    eventType: text("event_type").notNull(),
+    payload: jsonb("payload").notNull(),
+    endpointId: integer("endpoint_id")
+      .notNull()
+      .references(() => webhookEndpoints.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Set when status becomes `processing`; cleared on terminal / retry. Used to reclaim stale claims after crash. */
+    processingClaimedAt: timestamp("processing_claimed_at", { withTimezone: true }),
+  },
+  (table) => ({
+    statusNextAttemptIdx: index("webhook_outbox_status_next_attempt_idx").on(table.status, table.nextAttemptAt),
+    endpointEventIdx: uniqueIndex("webhook_outbox_endpoint_event_idx").on(table.endpointId, table.eventId),
+  })
+);
+
+export type WebhookEndpoint = typeof webhookEndpoints.$inferSelect;
+/** REST list/create/update responses omit `secret` (signing material never round-trips). */
+export type WebhookEndpointPublic = Omit<WebhookEndpoint, "secret">;
+export type InsertWebhookEndpoint = typeof webhookEndpoints.$inferInsert;
+export type WebhookOutbox = typeof webhookOutbox.$inferSelect;
+
+/** Dynamic document templates (Handlebars HTML) for PDF/DOCX generation. */
+export const DOC_TEMPLATE_VARIABLE_TYPES = ["text", "date", "number", "image", "list"] as const;
+export type DocTemplateVariableType = (typeof DOC_TEMPLATE_VARIABLE_TYPES)[number];
+
+export interface DocTemplateVariable {
+  key: string;
+  label: string;
+  type: DocTemplateVariableType;
+  required: boolean;
+  defaultValue?: string;
+}
+
+export interface DocTemplatePageConfig {
+  format?: "A4" | "Letter";
+  landscape?: boolean;
+  margins?: { top: string; right: string; bottom: string; left: string };
+  printBackground?: boolean;
+}
+
+export const docTemplates = pgTable(
+  "doc_templates",
+  {
+    id: serial("id").primaryKey(),
+    slug: text("slug").notNull().unique(),
+    name: text("name").notNull(),
+    description: text("description"),
+    bodyHtml: text("body_html").notNull(),
+    headerHtml: text("header_html"),
+    footerHtml: text("footer_html"),
+    cssStyles: text("css_styles"),
+    variables: jsonb("variables").notNull().$type<DocTemplateVariable[]>(),
+    pageConfig: jsonb("page_config").$type<DocTemplatePageConfig>(),
+    category: text("category"),
+    version: integer("version").notNull().default(1),
+    active: boolean("active").notNull().default(true),
+    createdByUserId: integer("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    categoryIdx: index("doc_templates_category_idx").on(table.category),
+    activeIdx: index("doc_templates_active_idx").on(table.active),
+  })
+);
+
+export type DocTemplate = typeof docTemplates.$inferSelect;
+export type InsertDocTemplate = typeof docTemplates.$inferInsert;

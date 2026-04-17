@@ -10,6 +10,7 @@ export const INVENTORY_EXPORT_HEADERS_VIEWER = [
   "useful_life",
   "category",
   "company_id",
+  "site_id",
 ] as const;
 
 export const INVENTORY_EXPORT_HEADERS_ADMIN = [
@@ -24,6 +25,7 @@ export function inventoryExportRowKey(header: string): string {
   if (header === "purchase_date") return "purchaseDate";
   if (header === "useful_life") return "usefulLife";
   if (header === "company_id") return "companyId";
+  if (header === "site_id") return "siteId";
   return header;
 }
 
@@ -38,6 +40,7 @@ export const INVENTORY_EXPORT_PDF_HEADERS_VIEWER = [
   "Responsible",
   "Category",
   "Company",
+  "Site",
 ] as const;
 
 export const INVENTORY_EXPORT_PDF_HEADERS_ADMIN = [
@@ -56,6 +59,7 @@ export const INVENTORY_EXPORT_PDF_KEY_MAP_VIEWER: Record<string, string> = {
   Responsible: "responsible",
   Category: "category",
   Company: "companyId",
+  Site: "siteId",
 };
 
 export const INVENTORY_EXPORT_PDF_KEY_MAP_ADMIN: Record<string, string> = {
@@ -74,6 +78,7 @@ export const INVENTORY_EXPORT_PDF_MAX_LEN_VIEWER: Record<string, number> = {
   Responsible: 25,
   Category: 25,
   Company: 25,
+  Site: 8,
 };
 
 export const INVENTORY_EXPORT_PDF_MAX_LEN_ADMIN: Record<string, number> = {
@@ -81,6 +86,6 @@ export const INVENTORY_EXPORT_PDF_MAX_LEN_ADMIN: Record<string, number> = {
   Notes: 40,
 };
 
-export const INVENTORY_EXPORT_PDF_COL_WIDTHS_VIEWER = [50, 180, 60, 38, 32, 48, 55, 65, 70, 48] as const;
+export const INVENTORY_EXPORT_PDF_COL_WIDTHS_VIEWER = [50, 160, 55, 36, 30, 44, 50, 58, 62, 44, 36] as const;
 export const INVENTORY_EXPORT_PDF_COL_WIDTHS_ADMIN = [...INVENTORY_EXPORT_PDF_COL_WIDTHS_VIEWER, 80] as const;
 

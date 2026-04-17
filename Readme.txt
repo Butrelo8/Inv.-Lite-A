@@ -9,10 +9,16 @@ FEATURES:
 - Inventory management (CRUD)
 - Image/photo attachments (upload and display)
 - CSV export (download all inventory)
-- CSV import (bulk add items from CSV file)
+- CSV import (bulk add items from CSV file); import templates with presets (generic / field / office) as CSV or XLSX from the Dashboard or /api/inventory/export/template (?preset=…)
+- Executive summary report (JSON + PDF): /reports/executive-summary in the app; APIs GET /api/reports/executive-summary and …/pdf (viewers: inventory + compliance; editors/admins: + ops KPIs)
 - Category suggestion when creating or editing items
 - Overview dashboard with charts and activity log
 - Authentication (login required to access the app)
+
+DOCUMENTATION (docs/):
+- BACKUP-RESTORE.md — backup layout and restore
+- LAN-SECURITY-RUNBOOK.md — LAN / reverse-proxy posture
+- HARDENING-FOLLOWUPS.md — security and ops follow-ups (narrative; §1–§8 shipped); webhook outbound URLs: SSRF mitigations + WEBHOOK_ALLOW_PRIVATE_TARGETS (.env.example); HTTPS webhooks to a literal IP: TLS/SNI caveats — see section 1 (webhook URLs) in that doc
 
 --------------------------------------------------------------------------------
 AVAILABLE COMMANDS (npm run)
@@ -33,6 +39,18 @@ AVAILABLE COMMANDS (npm run)
   npm run db:push
       Push the database schema (create/update tables). Run after schema changes.
 
+  npm run db:migrate:sites
+      Apply SQL migration migrations/add-sites.sql (sites table + inventory_items.site_id).
+      Uses DATABASE_URL from .env; handy on Windows when psql is not installed.
+
+  npm run db:migrate:site-rbac
+      Apply migrations/add-site-rbac.sql (role_templates, user_site_roles + seed templates).
+      Requires sites migration applied first. Uses DATABASE_URL from .env.
+
+  npm run db:migrate:webhook-outbox-claim
+      Add webhook_outbox.processing_claimed_at and reset stuck processing rows (webhook delivery hardening).
+      Requires webhook tables (migrations/add-webhooks.sql). Uses DATABASE_URL from .env.
+
   npm run create-user -- <username> <password> [role]
       Create a new user. role: admin | editor | viewer (default: viewer).
       Example: npm run create-user -- admin MyPassword123 editor
@@ -45,6 +63,11 @@ AVAILABLE COMMANDS (npm run)
 
   npm run integrity:scan
       Run read-only integrity scanner and generate scan/repair reports.
+
+  npm run integrity:clear-stale-refs
+      List DB rows pointing at missing upload files (dry-run). Example apply:
+      npm run integrity:clear-stale-refs -- --apply
+      Add --include-employee-documents to also delete employee_documents rows whose files are missing.
 
   npm run bulk-import-images -- <folder_path> [base_url]
       Bulk import images from a folder, matching by filename.

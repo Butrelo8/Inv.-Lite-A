@@ -8,6 +8,8 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { ensureThumbsDir } from "./thumbnails";
 import { emitOpsEvent, ensureOpsEventsTable } from "./ops-events";
+import { startWebhookPoller } from "./webhooks";
+import { shutdownPdfService } from "./doc-gen/pdf/pdf.service";
 
 const app = express();
 const SLOW_REQUEST_MS = parseInt(process.env.OPS_SLOW_REQUEST_MS || "1000", 10);
@@ -146,6 +148,9 @@ app.use((req, res, next) => {
     return res.status(status).json({ message });
   });
 
+  // Start the background webhook delivery poller
+  startWebhookPoller();
+
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
@@ -180,6 +185,7 @@ app.use((req, res, next) => {
 })();
 
 process.on("SIGINT", () => {
+  void shutdownPdfService();
   void emitOpsEvent({
     eventType: "system.shutdown",
     severity: "info",
@@ -189,6 +195,7 @@ process.on("SIGINT", () => {
 });
 
 process.on("SIGTERM", () => {
+  void shutdownPdfService();
   void emitOpsEvent({
     eventType: "system.shutdown",
     severity: "info",

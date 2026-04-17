@@ -9,12 +9,16 @@ import {
 } from "../inventory-export-config";
 
 test("inventory export: viewer headers exclude internal notes", async () => {
-  assert.ok(!INVENTORY_EXPORT_HEADERS_VIEWER.includes("notes"), "viewer CSV/XLSX must not include notes");
-  assert.ok(!INVENTORY_EXPORT_PDF_HEADERS_VIEWER.includes("Notes"), "viewer PDF must not include Notes");
+  const viewerCsv = INVENTORY_EXPORT_HEADERS_VIEWER as readonly string[];
+  const viewerPdf = INVENTORY_EXPORT_PDF_HEADERS_VIEWER as readonly string[];
+  assert.ok(!viewerCsv.includes("notes"), "viewer CSV/XLSX must not include notes");
+  assert.ok(!viewerPdf.includes("Notes"), "viewer PDF must not include Notes");
 });
 
 test("inventory export: admin headers include internal notes", async () => {
-  assert.ok(INVENTORY_EXPORT_HEADERS_ADMIN.includes("notes"), "admin CSV/XLSX must include notes");
-  assert.ok(INVENTORY_EXPORT_PDF_HEADERS_ADMIN.includes("Notes"), "admin PDF must include Notes");
+  const adminCsv = INVENTORY_EXPORT_HEADERS_ADMIN as readonly string[];
+  const adminPdf = INVENTORY_EXPORT_PDF_HEADERS_ADMIN as readonly string[];
+  assert.ok(adminCsv.includes("notes"), "admin CSV/XLSX must include notes");
+  assert.ok(adminPdf.includes("Notes"), "admin PDF must include Notes");
 });
 

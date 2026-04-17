@@ -1,0 +1,52 @@
+---
+description: Create a PRD via interview and codebase exploration; submit as GitHub issue. Use when the user wants a PRD, product requirements, or feature planning.
+alwaysApply: false
+---
+
+## WRITE A PRD — WORKFLOW
+- Skip steps when clearly unnecessary; default is thoroughness.
+- Stack context when relevant: Hono + Bun backend, Next.js or Astro frontend, PostgreSQL + Drizzle, Clerk, Stripe (see stack.mdc).
+
+## STEPS
+1. Ask for a long, detailed problem description and any solution ideas.
+2. Explore the repo to verify claims and understand current code.
+3. Interview until shared understanding — walk branches of the design tree; resolve dependencies between decisions.
+4. Sketch major modules to build or modify. Prefer **deep modules** (simple, stable public surface; complex implementation behind it; testable in isolation). Confirm modules with the user; ask which modules need tests.
+5. Write the PRD using the template below. Publish via **GitHub MCP** (preferred) as a GitHub issue; if MCP is unavailable, use `gh issue create` or ask the user to file manually.
+6. Architectural decisions that belong in the repo should also be reflected in **DECISIONS.md** when the project uses it (see docs.mdc).
+
+## PRD TEMPLATE (issue body)
+
+```text
+## Problem Statement
+(Problem from the user's perspective.)
+
+## Solution
+(Solution from the user's perspective.)
+
+## User Stories
+(Numbered list. Format each as: As a [role], I want [capability], so that [outcome].)
+(Be extensive — cover the whole feature surface.)
+
+## Implementation Decisions
+- Modules built or modified
+- Interfaces that change
+- Technical clarifications
+- Architecture, schema, API contracts, interactions
+(Do NOT paste file paths or code snippets — they go stale.)
+
+## Testing Decisions
+- What a good test means here (behavior via public API, not implementation)
+- Which modules get tests
+- Prior art — similar tests already in the repo
+(See testing.mdc for baseline coverage rules.)
+
+## Out of Scope
+(Explicitly excluded work.)
+
+## Further Notes
+(Anything else material.)
+```
+
+## RULES
+- Do not duplicate testing.mdc or stack.mdc — reference them where overlap exists.

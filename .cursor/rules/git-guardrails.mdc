@@ -1,0 +1,26 @@
+---
+description: Agent must not run destructive git (push, force, reset --hard, clean, branch -D, checkout/restore .). Human terminal is not blocked.
+alwaysApply: true
+---
+
+## GIT GUARDRAILS — AGENT ONLY
+- This rule binds the **AI agent**, not the developer's terminal. The user may still run any git command locally.
+- When a destructive operation is needed, **explain the exact command** and **ask the user to run it** (or approve an explicit exception for this session).
+
+## NEVER RUN (agent)
+- `git push` (any variant, including `--force`, `--force-with-lease`)
+- `git reset --hard`
+- `git clean -f` / `git clean -fd` / `git clean -fx` (any destructive clean)
+- `git branch -D` / `git branch --delete --force`
+- `git checkout .` / `git restore .` (discard all working tree changes in cwd)
+- Broad wipes such as `git stash clear` without explicit user request and understanding
+
+## SAFE ALTERNATIVES (agent may use when appropriate)
+- `git status`, `git diff`, `git log`, `git branch -a`, `git show`
+- `git add`, `git commit` on a **feature branch** (never direct commit to `main` — code-quality.mdc)
+- `git checkout -b`, `git switch` (non-destructive)
+- `git stash push` / `git stash pop` when scoped and reversible (avoid `stash clear`)
+
+## IF BLOCKED
+- State clearly: the command is blocked by user policy.
+- Offer: exact command for the user to run, or a safer sequence (e.g. backup branch before reset).

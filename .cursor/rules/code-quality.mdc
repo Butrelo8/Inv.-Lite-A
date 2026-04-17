@@ -1,0 +1,49 @@
+---
+description: Code quality standards - naming, organization, docs, security, process
+alwaysApply: true
+---
+
+## CODE QUALITY
+- Explicit over clever — readable beats smart every time
+- Early returns and guard clauses — avoid deeply nested conditionals
+- Handle errors at the start of functions, happy path goes last
+- Never hardcode secrets, API keys, or credentials — always use env vars
+- DRY — flag repetition aggressively before implementing
+- No dead code — remove unused variables, functions, and imports
+- Bias toward handling more edge cases, not fewer
+- Avoid magic numbers and strings — use named constants or configuration
+
+## NAMING
+- Prefer clear, intention-revealing names over implementation details.
+- Avoid single-letter names except for trivial loop/index variables.
+- Boolean identifiers should read like questions: `is`, `has`, `can`, or `should` prefixes.
+- Constants: UPPER_SNAKE_CASE or language-idiomatic constant style
+- Functions: verb + noun (e.g. `fetchUser`, `validateInput`, `sendEmail`)
+- Keep exported/public names stable; refactors should prefer adding new exports and deprecating old ones over renaming.
+
+## CODE ORGANIZATION
+- Reuse existing patterns and utilities before introducing new abstractions.
+- Keep modules focused: one reason to change per file/class/function.
+- Place “boundary” logic (parsing/validation/authorization) as close to inputs/edges as possible; keep core logic side-effect-light.
+- Keep error handling near the start of functions; prefer guard clauses over deep nesting.
+
+## DOCUMENTATION
+- Document public APIs (exported functions/classes, new endpoints) with: purpose, parameters, return value, and notable side effects.
+- Prefer small, targeted comments for “why” or constraints; avoid comments that only restate code.
+- Keep comments up to date when behavior changes — delete obsolete comments
+- Never add comments that just restate what the code does
+- For non-trivial flows (data pipelines, state machines, error flows), prefer ASCII diagrams in the plan or nearby code comments so future changes don’t break assumptions.
+
+## SECURITY
+- Secrets never in code — .env only, never committed to git
+- Validate and sanitize all user inputs at boundaries
+- Principle of least privilege on all permissions
+- Dependency hygiene — flag outdated or vulnerable packages when spotted
+
+## GIT / PROCESS
+- Commit messages: conventional commits format (feat:, fix:, chore:, docs:, refactor:)
+- Never commit directly to main
+- Run tests before suggesting a commit
+- Keep commits atomic — one logical change per commit
+- No “drive-by cleanups”: only change what is needed for the requested behavior.
+- If you add a new TODO, follow the `TODOS.md` format and include enough context to resume later without guessing.

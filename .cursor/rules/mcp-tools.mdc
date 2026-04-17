@@ -1,0 +1,42 @@
+---
+description: MCP tool usage rules — when and how to use Context7 and sequential thinking
+alwaysApply: true
+---
+
+## CONTEXT7 — USE AUTOMATICALLY
+Use Context7 MCP without being asked for ANY of the following:
+- Library or framework documentation (React, Hono, Next.js, Astro, Drizzle, Clerk, Stripe, etc.)
+- API reference for any external service
+- Package setup or configuration steps
+- CLI tool usage and flags
+- Version-specific syntax or behavior
+
+Never rely on training data for library documentation — it may be outdated.
+Always fetch current docs via Context7 before generating code that uses a library.
+
+## GITHUB MCP — USE AUTOMATICALLY
+Use GitHub MCP without being asked for ANY of the following:
+- Searching code patterns across repos
+- Reading PR diffs or commit history for context
+- Creating or updating issues from bugs found during development
+- Checking if a similar implementation already exists in the codebase
+
+## PLAYWRIGHT MCP — USE AUTOMATICALLY
+Use Playwright MCP without being asked for ANY of the following:
+- Verifying a UI flow works after implementing it
+- Testing auth flows (login, logout, signup)
+- Checking responsive layouts after CSS changes
+- Verifying Stripe checkout flow in development
+- Any task where "does this look/work correctly" needs a visual answer
+
+## SEQUENTIAL THINKING — USE FOR COMPLEX REASONING
+Use the sequential-thinking MCP tool when:
+- The task involves multiple interdependent decisions
+- Architecture or system design questions with tradeoffs
+- Debugging a non-obvious issue with multiple possible causes
+- Planning a feature that touches more than 3 files or systems
+
+Do NOT use sequential thinking for:
+- Simple, self-contained code generation
+- Straightforward bug fixes with an obvious cause
+- Tasks where a structured review workflow is already defined for the session

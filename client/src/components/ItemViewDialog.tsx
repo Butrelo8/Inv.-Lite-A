@@ -1,6 +1,7 @@
 import type { InventoryItem } from "@/hooks/use-inventory";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AssignmentTimeline } from "@/components/AssignmentTimeline";
+import { MaintenanceTimeline } from "@/components/MaintenanceTimeline";
 import { format } from "date-fns";
 
 export interface ItemViewDialogProps {
@@ -72,6 +73,11 @@ export function ItemViewDialog({ item, open, onOpenChange }: ItemViewDialogProps
           <div className="border-t pt-4 space-y-2">
             <div className="text-sm font-medium">Historial de asignaciones</div>
             <AssignmentTimeline itemId={item.id} />
+          </div>
+
+          <div className="border-t pt-4 space-y-2">
+            <div className="text-sm font-medium">Historial de mantenimiento</div>
+            <MaintenanceTimeline itemId={item.id} />
           </div>
         </div>
       </DialogContent>

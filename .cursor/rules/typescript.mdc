@@ -1,0 +1,60 @@
+---
+description: TypeScript standards - error handling, type safety, async patterns (non-UI emphasis)
+globs: "**/*.ts,**/*.tsx"
+alwaysApply: false
+---
+
+# TypeScript Standards
+
+## Error Handling
+
+```typescript
+// BAD - silent catch
+try {
+  await fetchData();
+} catch (e) {}
+
+// GOOD - log and rethrow or handle
+try {
+  await fetchData();
+} catch (e) {
+  logger.error('Failed to fetch', { error: e });
+  throw new DataFetchError('Unable to retrieve data', { cause: e });
+}
+```
+
+- Never use empty catch blocks. At minimum log the error.
+- Prefer custom error classes for domain errors.
+- Use `cause` when wrapping errors (Node 16+).
+
+## Type Safety
+
+- Avoid `any`. Use `unknown` and narrow with type guards when type is uncertain.
+- Prefer `interface` for object shapes; use `type` for unions, intersections, or mapped types.
+- Use `strict: true` (or equivalent) and fix resulting errors.
+- Annotate function return types for public APIs and non-obvious returns.
+- No implicit `any`.
+- No `@ts-nocheck`.
+- No non-null assertions (`!`).
+- Guard nested property reads:
+  - Use null guards / optional chaining (`user?.name`) instead of `user.name`.
+
+## Async / Await
+
+- Use `async/await` over raw Promises for readability.
+- Await in parallel when independent: `const [a, b] = await Promise.all([fetchA(), fetchB()]);`
+- Do not mix `.then()` and `await` in the same flow; pick one style.
+
+## Null and Undefined
+
+- Prefer optional chaining (`obj?.prop`) and nullish coalescing (`??`) over manual checks when appropriate.
+- Use explicit `| null` or `| undefined` in types when the value can be absent.
+
+## Async Cancellation (non-UI)
+
+- For `fetch` and other cancelable async work, prefer `AbortController` where applicable.
+- If you catch cancellation errors, handle them intentionally:
+  - Treat `AbortError` (and equivalent) as an expected cancellation signal.
+  - Do not swallow non-cancellation errors silently—log and rethrow or convert to a domain error.
+- Ensure cleanup for long-lived async work (timers, streams, subscriptions) so resources are released deterministically.
+

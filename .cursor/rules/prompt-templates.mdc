@@ -1,0 +1,87 @@
+---
+description: Prompt template guidance for workflow-oriented tasks
+alwaysApply: true
+---
+
+## When to suggest templates
+- New project setup: suggest the `Nuevo proyecto` template when the user asks to initialize a repo or start a new SaaS/app.
+- New feature implementation: suggest the `Iniciar feature nueva` template when the user names a feature and mentions related files/constraints.
+- Debugging: suggest the `Debug — algo no funciona` template when the user reports a bug or error and provides expected/actual behavior.
+- Explaining code: suggest the `Entender código ajeno` template when the user asks to understand existing code.
+- Refactoring: suggest the `Refactoring` template when the user requests readability/perf/DRY/error-handling improvements with scope constraints.
+- Code review: suggest the `Code review rápido` template when the user asks for correctness/security-focused review.
+- Writing tests: suggest the `Escribir tests` template when the user requests new tests or test coverage.
+- New API endpoints: suggest the `Nuevo endpoint de API` template when the user wants an endpoint added/modified.
+- Security review: suggest the `Revisar seguridad` template when the user requests a security pass.
+- Preparing to ship: suggest the `Preparar para ship` template when the user references shipping/release gates.
+
+## Template skeletons (copyable prompt formats)
+
+### Initialize project (`Nuevo proyecto`)
+```text
+Initialize this project as [DESCRIBE TU SAAS EN 1-2 LÍNEAS].
+Use my hono-template structure from github.com/Butrelo8/hono-template.
+Update package.json name, README, and .env.example with the correct project details.
+Create TODOS.md, DECISIONS.md, BUGS.md, and CHANGELOG.md if they don't exist.
+```
+
+### Implement feature (`Iniciar feature nueva`)
+```text
+I want to implement [NOMBRE DE LA FEATURE].
+
+Context:
+- Stack: Hono + Bun backend, Next.js frontend, PostgreSQL + Drizzle
+- Related files: [ARCHIVOS RELEVANTES O "search the codebase first"]
+- Constraints: [LIMITACIONES O "none"]
+
+Before implementing:
+1. Search the codebase for similar patterns
+2. Tell me what already exists that we can reuse
+3. Propose the minimal implementation — fewest files, fewest abstractions
+4. Wait for my approval before writing any code
+```
+
+### Debug (`Debug — algo no funciona`)
+```text
+I have a bug.
+
+File/function: [ARCHIVO O FUNCIÓN]
+Expected: [QUÉ DEBERÍA PASAR]
+Actual: [QUÉ ESTÁ PASANDO]
+Error message: [PEGA EL ERROR COMPLETO O "none"]
+
+Rules:
+- Search the codebase before suggesting a fix
+- Do NOT reformat code outside the scope of the fix
+- Fix the root cause, not just the symptom
+- If you need more context, ask — don't assume
+```
+
+### Understand code (`Entender código ajeno`)
+```text
+Explain this code as if I'm an intermediate developer.
+
+Cover:
+1. What it does in plain English
+2. Why it's written this way (patterns used)
+3. What could go wrong or break
+4. Anything I should change or improve
+
+Use Context7 if it references any external library.
+Do not rewrite anything — explain only.
+```
+
+### Security review (`Revisar seguridad`)
+```text
+Do a security review of [ARCHIVO O "this entire codebase"].
+
+Check for:
+- Hardcoded secrets or API keys
+- Missing input validation or sanitization
+- SQL injection vectors
+- Auth bypass possibilities
+- Sensitive data exposed in logs or responses
+- Missing rate limiting on public endpoints
+
+Be specific — cite file:line for each issue.
+```

@@ -2,6 +2,7 @@ import { useRef, useState, useMemo, useEffect } from "react";
 import { flushSync } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useInventory, useFilterOptions, useCreateInventoryItem, useUpdateInventoryItem, useDeleteInventoryItem, useUploadInventoryImage, useImportInventory, useAttachments, useItemDocuments, useUploadEmployeeDocument, useDeleteEmployeeDocument, useUnlinkDocumentFromItem, type InventoryItem } from "@/hooks/use-inventory";
+import { useDueMaintenanceSchedules } from "@/hooks/use-maintenance";
 import { useDebounce } from "@/hooks/use-debounce";
 import { api, buildUrl } from "@shared/routes";
 import { IntelligentSearchBar } from "@/components/IntelligentSearchBar";
@@ -50,13 +51,15 @@ import { ItemLabelDialog } from "@/components/ItemLabelDialog";
 import { ItemViewDialog } from "@/components/ItemViewDialog";
 import { AssignDialog } from "@/components/AssignDialog";
 import { ReturnDialog } from "@/components/ReturnDialog";
+import { MaintenanceScheduleDialog } from "@/components/MaintenanceScheduleDialog";
 import { LoadingOverlay } from "@/components/LoadingOverlay";
 import InventoryAnalytics from "@/components/InventoryAnalytics";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Plus, Edit2, Trash2, Copy, Package, FilterX, Loader2, Download, Upload, ImageIcon, ChevronDown, ChevronUp, ChevronsUpDown, FileSpreadsheet, FileText, Columns3, QrCode, ChevronLeft, ChevronRight, X, Eye, UserPlus, Undo2, BarChart3 } from "lucide-react";
+import { useSites } from "@/hooks/use-sites";
+import { Plus, Edit2, Trash2, Copy, Package, FilterX, Loader2, Download, Upload, ImageIcon, ChevronDown, ChevronUp, ChevronsUpDown, FileSpreadsheet, FileText, Columns3, QrCode, ChevronLeft, ChevronRight, X, Eye, UserPlus, Undo2, BarChart3, Wrench, MapPin } from "lucide-react";
 import { format } from "date-fns";
 import { categoryToDisplay, conditionToDisplay } from "@/lib/category-translate";
 import { SUGGESTED_CATEGORIES } from "@/lib/category-suggest";
@@ -68,6 +71,7 @@ const CONDITIONS = ["New", "Excellent", "Good", "Fair", "Poor", "Damaged"];
 const INVENTORY_COLUMNS_STORAGE_KEY = "inventory-table-columns";
 const INVENTORY_SORT_STORAGE_KEY = "inventory-table-sort";
 const INVENTORY_ANALYTICS_OPEN_KEY = "inventory-analytics-open";
+const INVENTORY_SITE_ID_STORAGE_KEY = "inventory-site-id";
 
 function loadAnalyticsOpen(): boolean {
   if (typeof window === "undefined") return false;
@@ -189,9 +193,11 @@ export default function Dashboard() {
   const [viewItemDetails, setViewItemDetails] = useState<InventoryItem | null>(null);
   const [assignDialogItem, setAssignDialogItem] = useState<InventoryItem | null>(null);
   const [returnDialogItem, setReturnDialogItem] = useState<InventoryItem | null>(null);
+  const [maintenanceScheduleItem, setMaintenanceScheduleItem] = useState<InventoryItem | null>(null);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(loadColumnVisibility);
   const [sortState, setSortState] = useState<{ sortBy: SortableColumn; sortDir: "asc" | "desc" }>(loadSort);
   const [page, setPage] = useState(1);
+  const [dueMaintenanceFilter, setDueMaintenanceFilter] = useState("all");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [selectedItemsDetails, setSelectedItemsDetails] = useState<Map<number, { code: string; name: string }>>(new Map());
   const [editingCell, setEditingCell] = useState<{ itemId: number; field: string } | null>(null);
@@ -207,6 +213,39 @@ export default function Dashboard() {
   const [bulkUpdating, setBulkUpdating] = useState(false);
   const [lastBulkUndo, setLastBulkUndo] = useState<{ token: string; expiresAt: string; deleted: number } | null>(null);
   const [showAnalytics, setShowAnalytics] = useState(loadAnalyticsOpen);
+
+  const { user } = useAuth();
+  const siteScopingEnabled = Boolean(user?.siteScopingEnabled);
+  const [selectedSiteId, setSelectedSiteId] = useState<number | "">(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      const raw = localStorage.getItem(INVENTORY_SITE_ID_STORAGE_KEY);
+      if (!raw) return "";
+      const n = parseInt(raw, 10);
+      return Number.isFinite(n) ? n : "";
+    } catch {
+      return "";
+    }
+  });
+
+  const { data: sitesPayload } = useSites(siteScopingEnabled);
+  const sitesList = sitesPayload?.sites ?? [];
+
+  useEffect(() => {
+    if (!siteScopingEnabled || sitesList.length === 0) return;
+    const valid = selectedSiteId !== "" && sitesList.some((s) => s.id === selectedSiteId);
+    if (valid) return;
+    const firstId = sitesList[0]!.id;
+    setSelectedSiteId(firstId);
+    try {
+      localStorage.setItem(INVENTORY_SITE_ID_STORAGE_KEY, String(firstId));
+    } catch {
+      /* ignore */
+    }
+  }, [siteScopingEnabled, sitesList, selectedSiteId]);
+
+  const inventorySiteFilter =
+    siteScopingEnabled && selectedSiteId !== "" ? Number(selectedSiteId) : undefined;
 
   const debouncedSearch = useDebounce(search, 300);
 
@@ -243,6 +282,7 @@ export default function Dashboard() {
   if (category) exportQuery.set("category", category);
   if (responsible) exportQuery.set("responsible", responsible);
   if (companyId !== "") exportQuery.set("companyId", String(companyId));
+  if (inventorySiteFilter != null) exportQuery.set("siteId", String(inventorySiteFilter));
   if (datePreset && dateFrom) exportQuery.set("dateFrom", dateFrom);
   if (datePreset && dateTo) exportQuery.set("dateTo", dateTo);
   if (addedAfter) exportQuery.set("addedAfter", addedAfter);
@@ -275,6 +315,7 @@ export default function Dashboard() {
     category: category || undefined,
     responsible: responsible || undefined,
     companyId: companyId === "" ? undefined : Number(companyId),
+    siteId: inventorySiteFilter,
     dateFrom: datePreset ? dateFrom : undefined,
     dateTo: datePreset ? dateTo : undefined,
     addedAfter,
@@ -282,6 +323,16 @@ export default function Dashboard() {
     limit: pageSize,
     offset: (page - 1) * pageSize,
   });
+  
+  const { data: dueSchedulesData } = useDueMaintenanceSchedules(true, inventorySiteFilter);
+  const overdueItemIds = useMemo(() => {
+    const set = new Set<number>();
+    if (dueSchedulesData?.schedules) {
+      dueSchedulesData.schedules.forEach((s: any) => set.add(s.itemId));
+    }
+    return set;
+  }, [dueSchedulesData]);
+
   const items = inventoryData?.items ?? [];
   const activeAssignmentSet = useMemo(
     () => new Set(inventoryData?.activeAssignmentItemIds ?? []),
@@ -294,7 +345,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, category, responsible, companyId, datePreset, recentPreset]);
+  }, [debouncedSearch, category, responsible, companyId, datePreset, recentPreset, inventorySiteFilter]);
 
   useEffect(() => {
     if (!lastBulkUndo) return;
@@ -315,7 +366,7 @@ export default function Dashboard() {
     }
   }, [showAnalytics]);
 
-  const { data: filterOptions = { categories: [], responsible: [], companies: [] } } = useFilterOptions();
+  const { data: filterOptions = { categories: [], responsible: [], companies: [] } } = useFilterOptions(inventorySiteFilter);
   const companiesById = useMemo(() => {
     const map = new Map<number, string>();
     (filterOptions.companies ?? []).forEach((c) => map.set(c.id, c.name));
@@ -324,7 +375,10 @@ export default function Dashboard() {
 
   const sortedItems = useMemo(() => {
     const { sortBy, sortDir } = sortState;
-    const arr = [...items];
+    let arr = [...items];
+    if (dueMaintenanceFilter === "due") {
+      arr = arr.filter(i => overdueItemIds.has(i.id));
+    }
     const mult = sortDir === "asc" ? 1 : -1;
     const companyName = (id: number | null) => (companiesById.get(id ?? 0) ?? "");
     arr.sort((a, b) => {
@@ -344,7 +398,7 @@ export default function Dashboard() {
       return mult * cmp;
     });
     return arr;
-  }, [items, sortState, companiesById]);
+  }, [items, sortState, companiesById, dueMaintenanceFilter, overdueItemIds]);
 
   const selectAllOnPage = () => {
     setSelectedIds((prev) => {
@@ -412,7 +466,7 @@ export default function Dashboard() {
     return order;
   }, [visibleColumns]);
 
-  const hasFilters = category || responsible || companyId !== "" || datePreset || recentPreset;
+  const hasFilters = category || responsible || companyId !== "" || datePreset || recentPreset || dueMaintenanceFilter !== "all";
 
   const clearFilters = () => {
     setCategory("");
@@ -420,6 +474,7 @@ export default function Dashboard() {
     setCompanyId("");
     setDatePreset("");
     setRecentPreset("");
+    setDueMaintenanceFilter("all");
   };
   const createMutation = useCreateInventoryItem();
   const updateMutation = useUpdateInventoryItem();
@@ -428,7 +483,6 @@ export default function Dashboard() {
   const importMutation = useImportInventory();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
-  const { user } = useAuth();
   const canEdit = (user?.role ?? "viewer") === "editor" || (user?.role ?? "viewer") === "admin";
   const exportCsvEndpoint = canEdit ? "/api/inventory/export/admin" : "/api/inventory/export";
   const exportXlsxEndpoint = canEdit ? "/api/inventory/export/admin/xlsx" : "/api/inventory/export/xlsx";
@@ -460,7 +514,9 @@ export default function Dashboard() {
     await new Promise((r) => requestAnimationFrame(r));
     await new Promise((r) => requestAnimationFrame(r));
     try {
-      const item = await createMutation.mutateAsync(data);
+      const payload =
+        siteScopingEnabled && inventorySiteFilter != null ? { ...data, siteId: inventorySiteFilter } : data;
+      const item = await createMutation.mutateAsync(payload);
       if (totalSteps === 1) {
         setLoadingOverlay((prev) => ({ ...prev, progress: 100, message: "Listo." }));
       } else {
@@ -882,7 +938,7 @@ export default function Dashboard() {
         <CollapsibleContent>
           {showAnalytics && (
             <div className="rounded-2xl border border-border/50 bg-card/30 p-5 md:p-6 mb-4">
-              <InventoryAnalytics />
+              <InventoryAnalytics siteId={inventorySiteFilter} />
             </div>
           )}
         </CollapsibleContent>
@@ -899,12 +955,38 @@ export default function Dashboard() {
             <BarChart3 className="w-4 h-4 mr-2" />
             Analíticas
           </Button>
-          {canEdit && (
-          <Button variant="outline" size="sm" onClick={() => { window.location.href = "/api/inventory/export/template"; }}>
-            <Download className="w-4 h-4 mr-2" />
-            Plantilla
-          </Button>
-          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" type="button">
+                <Download className="w-4 h-4 mr-2" />
+                Plantillas
+                <ChevronDown className="w-4 h-4 ml-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuLabel>Descargar plantilla CSV</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => { window.location.href = "/api/inventory/export/template"; }}>
+                Genérica
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { window.location.href = "/api/inventory/export/template?preset=field"; }}>
+                Campo / industrial
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { window.location.href = "/api/inventory/export/template?preset=office"; }}>
+                Oficina / TI
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Descargar plantilla Excel</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => { window.location.href = "/api/inventory/export/template/xlsx"; }}>
+                Genérica (.xlsx)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { window.location.href = "/api/inventory/export/template/xlsx?preset=field"; }}>
+                Campo / industrial (.xlsx)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { window.location.href = "/api/inventory/export/template/xlsx?preset=office"; }}>
+                Oficina / TI (.xlsx)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm">
@@ -991,6 +1073,32 @@ export default function Dashboard() {
         {/* Quick Filters */}
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium text-muted-foreground">Filtros rápidos:</span>
+          {siteScopingEnabled && sitesList.length > 0 && (
+            <Select
+              value={selectedSiteId === "" ? String(sitesList[0]!.id) : String(selectedSiteId)}
+              onValueChange={(v) => {
+                const id = Number(v);
+                setSelectedSiteId(id);
+                try {
+                  localStorage.setItem(INVENTORY_SITE_ID_STORAGE_KEY, String(id));
+                } catch {
+                  /* ignore */
+                }
+              }}
+            >
+              <SelectTrigger className="w-[200px] h-8 text-sm">
+                <MapPin className="h-3.5 w-3.5 mr-1 shrink-0 opacity-70" />
+                <SelectValue placeholder="Sitio" />
+              </SelectTrigger>
+              <SelectContent>
+                {sitesList.map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)}>
+                    {s.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <Select value={category || "all"} onValueChange={(v) => setCategory(v === "all" ? "" : v)}>
             <SelectTrigger className="w-[160px] h-8 text-sm">
               <SelectValue placeholder="Por categoría" />
@@ -1048,6 +1156,15 @@ export default function Dashboard() {
               <SelectItem value="added-30">Añadidos últimos 30 días</SelectItem>
               <SelectItem value="modified-7">Modificados últimos 7 días</SelectItem>
               <SelectItem value="modified-30">Modificados últimos 30 días</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={dueMaintenanceFilter} onValueChange={setDueMaintenanceFilter}>
+            <SelectTrigger className="w-[200px] h-8 text-sm">
+              <SelectValue placeholder="Mantenimiento" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Mantenimiento: Todos</SelectItem>
+              <SelectItem value="due">Sólo con mantenimientos vencidos</SelectItem>
             </SelectContent>
           </Select>
           {hasFilters && (
@@ -1452,15 +1569,25 @@ export default function Dashboard() {
                           onFocus={() => setEditingCell({ itemId: item.id, field: "name" })}
                         >
                           <div className="font-medium text-foreground">{item.name}</div>
-                          <div className="text-xs text-muted-foreground mt-0.5">
-                            {item.serialNumber ? `S/N: ${item.serialNumber}` : "Sin S/N"}
+                          <div className="text-xs text-muted-foreground mt-0.5 flex flex-wrap gap-2 items-center">
+                            <span>{item.serialNumber ? `S/N: ${item.serialNumber}` : "Sin S/N"}</span>
+                            {overdueItemIds.has(item.id) && (
+                              <span className="text-[10px] font-bold uppercase tracking-wide rounded-md bg-destructive text-destructive-foreground px-1.5 py-0.5 truncate">
+                                Mantenimiento Vencido
+                              </span>
+                            )}
                           </div>
                         </div>
                       ) : (
                         <>
                           <div className="font-medium text-foreground">{item.name}</div>
-                          <div className="text-xs text-muted-foreground mt-0.5">
-                            {item.serialNumber ? `S/N: ${item.serialNumber}` : "Sin S/N"}
+                          <div className="text-xs text-muted-foreground mt-0.5 flex flex-wrap gap-2 items-center">
+                            <span>{item.serialNumber ? `S/N: ${item.serialNumber}` : "Sin S/N"}</span>
+                            {overdueItemIds.has(item.id) && (
+                              <span className="text-[10px] font-bold uppercase tracking-wide rounded-md bg-destructive text-destructive-foreground px-1.5 py-0.5 truncate">
+                                Mantenimiento Vencido
+                              </span>
+                            )}
                           </div>
                         </>
                       )}
@@ -1820,6 +1947,16 @@ export default function Dashboard() {
                               <Undo2 className="w-4 h-4" />
                             </Button>
                           )}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 hover:text-primary hover:bg-primary/10"
+                            onClick={() => setMaintenanceScheduleItem(item)}
+                            title="Programar mantenimiento"
+                            aria-label={`Programar mantenimiento: ${item.code} — ${item.name}`}
+                          >
+                            <Wrench className="w-4 h-4" />
+                          </Button>
                         </>
                       )}
                       {!canEdit && (
@@ -1969,10 +2106,11 @@ export default function Dashboard() {
           </DialogHeader>
           <InventoryForm
             defaultValues={
-              duplicatingItem
+              (duplicatingItem
                 ? inventoryItemToDuplicateCreateBody(duplicatingItem)
-                : undefined
+                : undefined) as any
             }
+            suggestCodeSiteId={inventorySiteFilter}
             onSubmit={handleCreate}
             isSubmitting={createMutation.isPending}
             onCancel={() => {
@@ -2011,6 +2149,7 @@ export default function Dashboard() {
                   imageUrl: editingItem.imageUrl ?? undefined,
                   purchaseDate: editingItem.purchaseDate ?? undefined
                 }}
+                suggestCodeSiteId={inventorySiteFilter}
                 onSubmit={handleUpdate} 
                 isSubmitting={updateMutation.isPending} 
                 onCancel={() => setEditingItem(null)}
@@ -2149,6 +2288,14 @@ export default function Dashboard() {
         open={!!returnDialogItem}
         onOpenChange={(open) => {
           if (!open) setReturnDialogItem(null);
+        }}
+      />
+
+      <MaintenanceScheduleDialog
+        itemId={maintenanceScheduleItem?.id ?? null}
+        open={!!maintenanceScheduleItem}
+        onOpenChange={(open) => {
+          if (!open) setMaintenanceScheduleItem(null);
         }}
       />
 

@@ -133,8 +133,12 @@ export default function Overview() {
                     ))}
                   </Pie>
                   <ChartLegend
-                    content={(props) => (
-                      <ChartLegendContent {...props} className="text-sm flex-wrap justify-start gap-x-3 gap-y-2" />
+                    content={({ payload, verticalAlign }) => (
+                      <ChartLegendContent
+                        payload={payload}
+                        verticalAlign={verticalAlign}
+                        className="text-sm flex-wrap justify-start gap-x-3 gap-y-2"
+                      />
                     )}
                     wrapperStyle={{ paddingTop: 10 }}
                   />
@@ -269,8 +273,12 @@ export default function Overview() {
                     ))}
                   </Pie>
                   <ChartLegend
-                    content={(props) => (
-                      <ChartLegendContent {...props} className="text-sm flex-wrap justify-start gap-x-3 gap-y-2" />
+                    content={({ payload, verticalAlign }) => (
+                      <ChartLegendContent
+                        payload={payload}
+                        verticalAlign={verticalAlign}
+                        className="text-sm flex-wrap justify-start gap-x-3 gap-y-2"
+                      />
                     )}
                     wrapperStyle={{ paddingTop: 8 }}
                   />

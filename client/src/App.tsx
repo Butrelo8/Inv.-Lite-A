@@ -9,6 +9,8 @@ import Overview from "@/pages/Overview";
 import Dashboard from "@/pages/Dashboard";
 import History from "@/pages/History";
 import Employees from "@/pages/Employees";
+import Compliance from "@/pages/Compliance";
+import ExecutiveSummary from "@/pages/ExecutiveSummary";
 import Companies from "@/pages/Companies";
 import SharedNotes from "@/pages/SharedNotes";
 import Users from "@/pages/Users";
@@ -64,6 +66,16 @@ function Router() {
             <Employees />
           </AppLayout>
         )}
+      </Route>
+      <Route path="/compliance">
+        <AppLayout>
+          <Compliance />
+        </AppLayout>
+      </Route>
+      <Route path="/reports/executive-summary">
+        <AppLayout>
+          <ExecutiveSummary />
+        </AppLayout>
       </Route>
       <Route path="/companies">
         {((user?.role ?? "viewer") === "viewer") ? (

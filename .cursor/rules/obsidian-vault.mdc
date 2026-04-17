@@ -1,0 +1,33 @@
+---
+alwaysApply: false
+---
+## OBSIDIAN VAULT — LOCATION
+- **Vault root**: `C:\Users\black\iCloudDrive\iCloud~md~obsidian\Mybrain🫩` (Windows). Use `C:/Users/black/iCloudDrive/iCloud~md~obsidian/Mybrain🫩` in tools when forward slashes work.
+- The vault is often **outside** the git repo. For reliable read/write/search, **add `C:\Users\black\iCloudDrive\iCloud~md~obsidian\Mybrain🫩` to the Cursor workspace** (File → Add Folder to Workspace) when working on notes; otherwise tools may not see files.
+
+## NAMING
+- **Index notes**: aggregate topics (e.g. `Skills Index.md`, `RAG Index.md`).
+- **Title Case** for note titles / filenames unless the user prefers otherwise.
+- Prefer links and index notes over deep folder hierarchies (flat or shallow is fine).
+
+## LINKING
+- Use Obsidian wikilinks: `[[Note Title]]`.
+- New notes: add related `[[wikilinks]]` at the bottom.
+- Index notes: lists of `[[wikilinks]]`.
+
+## SEARCH (prefer Cursor tools)
+- **Glob** under vault root: `**/*.md` with path scoped to `C:/Users/black/iCloudDrive/iCloud~md~obsidian/Mybrain🫩` when the folder is in the workspace.
+- **Grep** content: pattern + `*.md` under the same root.
+- On Windows without workspace folder: try absolute path in tool args if supported; if not, ask user to add the folder to the workspace.
+
+## CREATE NOTE
+1. **Title Case** filename + `.md`.
+2. One coherent unit of content (per vault norms).
+3. Link out to related notes at the bottom.
+4. If part of a numbered sequence, follow the user's existing numbering scheme in the vault.
+
+## BACKLINKS
+- Grep for `[[Exact Note Title]]` across `C:/Users/black/iCloudDrive/iCloud~md~obsidian/Mybrain🫩/**/*.md` to find backlinks.
+
+## FIND INDEX NOTES
+- Glob: `**/*Index*.md` under vault root.

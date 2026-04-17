@@ -11,6 +11,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import pg from "pg";
+import { classifyUploadPath } from "./integrity-file-paths.js";
 
 const { Pool } = pg;
 
@@ -72,6 +73,31 @@ function toInt(n: unknown): number {
   const parsed = Number(n);
   if (!Number.isFinite(parsed)) return 0;
   return parsed;
+}
+
+export type DbFileRefRow = { origin: string; recordId: number; fileUrl: string };
+
+/** Every DB row that points at a repo-relative upload path where the file is missing on disk. */
+export async function findMissingDbFileReferences(pool: pg.Pool, repoRoot: string): Promise<DbFileRefRow[]> {
+  const allRefs = await pool.query<{ origin: string; record_id: number; file_url: string }>(
+    `select 'inventory_items.image_url'::text as origin, id as record_id, image_url as file_url
+       from inventory_items
+      where image_url is not null and image_url <> ''
+     union all
+     select 'inventory_attachments.image_url'::text as origin, id as record_id, image_url as file_url
+       from inventory_attachments
+      where image_url is not null and image_url <> ''
+     union all
+     select 'employee_documents.file_url'::text as origin, id as record_id, file_url
+       from employee_documents
+      where file_url is not null and file_url <> ''`,
+  );
+  const out: DbFileRefRow[] = [];
+  for (const row of allRefs.rows) {
+    if (classifyUploadPath(row.file_url, repoRoot) !== "missing") continue;
+    out.push({ origin: row.origin, recordId: row.record_id, fileUrl: row.file_url });
+  }
+  return out;
 }
 
 async function runScan(pool: pg.Pool): Promise<Finding[]> {
@@ -181,32 +207,13 @@ async function runScan(pool: pg.Pool): Promise<Finding[]> {
     details: "History entries whose product/user/company references no longer exist.",
   });
 
-  const missingFilesSample: Array<Record<string, unknown>> = [];
-  const allRefs = await pool.query<{ origin: string; record_id: number; file_url: string }>(
-    `select 'inventory_items.image_url'::text as origin, id as record_id, image_url as file_url
-       from inventory_items
-      where image_url is not null and image_url <> ''
-     union all
-     select 'inventory_attachments.image_url'::text as origin, id as record_id, image_url as file_url
-       from inventory_attachments
-      where image_url is not null and image_url <> ''
-     union all
-     select 'employee_documents.file_url'::text as origin, id as record_id, file_url
-       from employee_documents
-      where file_url is not null and file_url <> ''`,
-  );
-  let missingCount = 0;
-  for (const row of allRefs.rows) {
-    const rel = row.file_url.startsWith("/") ? row.file_url.slice(1) : row.file_url;
-    const full = path.resolve(REPO_ROOT, rel);
-    if (!full.startsWith(REPO_ROOT)) continue;
-    if (!fs.existsSync(full)) {
-      missingCount += 1;
-      if (missingFilesSample.length < SAMPLE_LIMIT) {
-        missingFilesSample.push({ origin: row.origin, recordId: row.record_id, fileUrl: row.file_url });
-      }
-    }
-  }
+  const missingRefs = await findMissingDbFileReferences(pool, REPO_ROOT);
+  const missingCount = missingRefs.length;
+  const missingFilesSample: Array<Record<string, unknown>> = missingRefs.slice(0, SAMPLE_LIMIT).map((r) => ({
+    origin: r.origin,
+    recordId: r.recordId,
+    fileUrl: r.fileUrl,
+  }));
   findings.push({
     id: "missing_files_for_db_references",
     title: "DB-referenced files missing on disk",
@@ -272,7 +279,7 @@ export function buildRepairActions(findings: Finding[]): RepairAction[] {
       title: "Resolve missing file references",
       severity: "destructive",
       recommendation:
-        "Attempt restore from backup first. Only after restore attempts, consider clearing stale file references in DB records.",
+        "Attempt restore from backup first. Only after restore attempts, run `npm run integrity:clear-stale-refs` (dry-run) then `--apply`; add `--include-employee-documents` to delete employee document rows whose files are missing.",
       sampleSql:
         "select id, image_url from inventory_items where image_url is not null and image_url <> '';",
     });
