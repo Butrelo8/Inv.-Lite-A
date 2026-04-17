@@ -25,11 +25,13 @@ services:
       BIND_HOST: 0.0.0.0
       TRUST_PROXY: "false"
       DATABASE_URL: postgresql://inventario:inventario@postgres:5432/inventario
+      RESPONSIVA_TEMPLATE_PATH: /app/src/templates/responsiva_template.docx
       # Replace this value with a strong random string.
       SESSION_SECRET: "CHANGE-ME-generate-random-32plus-chars"
       COOKIE_SECURE: "false"
     volumes:
       - uploads_data:/app/uploads
+      - ./client/src/templates:/app/src/templates:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -7,10 +7,6 @@ export interface PhotoEntry {
   cyEmu: number;
 }
 
-/** Default max inline image box (same numeric caps as the old fixed portrait size). */
-export const MAX_PHOTO_CX_EMU = 2_800_000;
-export const MAX_PHOTO_CY_EMU = 3_800_000;
-
 /**
  * Fit natural pixel dimensions into a max EMU rectangle; preserves aspect ratio.
  * If dimensions are missing or invalid, returns the full max box (legacy behavior).
@@ -42,6 +38,17 @@ export function computeImageExtentEmu(
 const COLS_PER_ROW = 3;
 const TABLE_WIDTH_DXA = 9360;
 const CELL_WIDTH_DXA = 3120;
+const DXA_TO_EMU = 635;
+const CELL_INNER_PADDING_DXA = 120;
+const CELL_IMAGE_MAX_WIDTH_DXA = CELL_WIDTH_DXA - CELL_INNER_PADDING_DXA * 2;
+const CELL_IMAGE_MAX_HEIGHT_DXA = 2520;
+
+/**
+ * Cap drawing size to the actual table-cell box.
+ * `CELL_WIDTH_DXA` (3120) ~= 1_981_200 EMU, so old 2_800_000 overflowed and got clipped.
+ */
+export const MAX_PHOTO_CX_EMU = CELL_IMAGE_MAX_WIDTH_DXA * DXA_TO_EMU;
+export const MAX_PHOTO_CY_EMU = CELL_IMAGE_MAX_HEIGHT_DXA * DXA_TO_EMU;
 
 const TABLE_OPEN =
   "<w:tbl>" +
@@ -71,17 +78,9 @@ const CELL_BORDERS =
   '<w:right w:val="nil"/>' +
   "</w:tcBorders>";
 
-function imageCell(entry: PhotoEntry): string {
+function imageDrawingXml(entry: PhotoEntry): string {
   const { cxEmu, cyEmu } = entry;
   return (
-    "<w:tc>" +
-    "<w:tcPr>" +
-    `<w:tcW w:w="${CELL_WIDTH_DXA}" w:type="dxa"/>` +
-    CELL_BORDERS +
-    "</w:tcPr>" +
-    "<w:p>" +
-    '<w:pPr><w:jc w:val="center"/></w:pPr>' +
-    "<w:r>" +
     "<w:drawing>" +
     '<wp:inline distT="0" distB="0" distL="0" distR="0" ' +
     'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
@@ -98,6 +97,8 @@ function imageCell(entry: PhotoEntry): string {
     "</pic:nvPicPr>" +
     "<pic:blipFill>" +
     `<a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="${entry.rId}"/>` +
+    "<a:srcRect/>" +
+    "<a:stretch><a:fillRect/></a:stretch>" +
     "</pic:blipFill>" +
     "<pic:spPr>" +
     "<a:xfrm>" +
@@ -111,8 +112,32 @@ function imageCell(entry: PhotoEntry): string {
     "</a:graphic>" +
     "</wp:inline>" +
     "</w:drawing>" +
+    ""
+  );
+}
+
+/** Build a centered `<w:p>` containing one image drawing (used by numbered photo slots). */
+export function buildPhotoParagraphXml(entry: PhotoEntry): string {
+  return (
+    "<w:p>" +
+    '<w:pPr><w:jc w:val="center"/></w:pPr>' +
+    "<w:r>" +
+    imageDrawingXml(entry) +
     "</w:r>" +
     "</w:p>" +
+    ""
+  );
+}
+
+function imageCell(entry: PhotoEntry): string {
+  return (
+    "<w:tc>" +
+    "<w:tcPr>" +
+    `<w:tcW w:w="${CELL_WIDTH_DXA}" w:type="dxa"/>` +
+    '<w:tcMar><w:left w:w="120" w:type="dxa"/><w:right w:w="120" w:type="dxa"/><w:top w:w="120" w:type="dxa"/><w:bottom w:w="120" w:type="dxa"/></w:tcMar>' +
+    CELL_BORDERS +
+    "</w:tcPr>" +
+    buildPhotoParagraphXml(entry) +
     "</w:tc>"
   );
 }
@@ -122,6 +147,7 @@ function emptyCell(): string {
     "<w:tc>" +
     "<w:tcPr>" +
     `<w:tcW w:w="${CELL_WIDTH_DXA}" w:type="dxa"/>` +
+    '<w:tcMar><w:left w:w="120" w:type="dxa"/><w:right w:w="120" w:type="dxa"/><w:top w:w="120" w:type="dxa"/><w:bottom w:w="120" w:type="dxa"/></w:tcMar>' +
     CELL_BORDERS +
     "</w:tcPr>" +
     '<w:p><w:pPr><w:jc w:val="center"/></w:pPr></w:p>' +

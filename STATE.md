@@ -1,9 +1,9 @@
 # Project State
 
 ## Current Position
-- Phase: **Single-tenant perfection** + **security / hygiene** — **full codebase review** done (findings in **`TODOS.md` Open**).
-- Last completed (this session): **(1)** **Full codebase code review** (Express/Drizzle/routes/auth/webhooks/site RBAC/uploads) — no code changes from review itself. **(2)** **`TODOS.md`** — **13 Open cards**: P0 **`storage.updateItem`** missing-row bug + **`upsertUserSiteRole`** transaction; P1 LIKE escape + delete-path unification; P2–P3 perf/quality/ops; P4 umbrella backlog. Prior batch still applies: webhook hardening, **`secret`** redaction, **`use-auth`** role normalize, webhook **`:id`**, **`WebhookEndpointUpdateSet`**.
-- Next up: **Ship P0 from `TODOS.md` Open** (**`updateItem`**, **`upsertUserSiteRole`**) + tests · then **merge / deploy verification** · full **`npm run test`** — **`webhooks.test.ts`** under **Node** if **`mock.method`** fails under Bun · optional browser QA (HEIC) · **`/dream`** if consolidating notes.
+- Phase: **Responsiva DOCX stabilization** + deployment hygiene (Docker pathing + runtime template compatibility).
+- Last completed (this session): Responsiva pipeline hardened end-to-end — added env-based template path (`RESPONSIVA_TEMPLATE_PATH`) with fallback; compose mount for template file; photo sizing now respects table-cell bounds; numbered slot markers `{{FOTOS1}}..{{FOTOSN}}` supported; run-split/underlined marker matching fixed; fallback no longer crashes when `{{FOTOS}}` missing; empty slots now prune table cells/empty rows; image fill XML updated (`a:stretch/a:fillRect`) to avoid clipped-strip rendering.
+- Next up: Re-verify generated DOCX for 1/2/5-photo items in production-like container, then decide if HEIC should be auto-converted during responsiva generation (currently only jpg/png embed).
 
 ## Accumulated Decisions
 <!-- Key decisions made during development. Keep each decision as:
@@ -48,6 +48,10 @@
 - 2026-04-09: **Strict `siteId` when site scoping on** — present query param must be digits-only, safe integer, **`> 0`**, else **`400`** **`invalid_site_id`**; avoids **`parseInt`** “prefix” surprises and accidental all-sites reads — **`server/inventory-list-context.ts`**
 - 2026-04-09: **Post-review webhook + auth hygiene (follow-up session)** — admin webhook JSON never returns **`secret`** (**`DECISIONS.md`**); **`normalizeUserRoleFromApi`**; **`parsePositiveIntPathParam`** for webhook PATCH/DELETE; **`WebhookEndpointUpdateSet`**; Hardening §1 doc aligned with actual delivery stack.
 - 2026-04-09: **Full-repo code review → `TODOS.md` Open** — second-pass review (wider than the prior cleared batch) captured as actionable cards: correctness (**`updateItem`**), transactional **`upsertUserSiteRole`**, LIKE escaping, delete-path consistency, **`getAuthUser`** cleanup, SQL aggregates, bulk perf, async fs, JSON limit, ops summary fan-out, **`/health`**, bootstrap tables vs Drizzle, P4 backlog — prioritize P0 before relying on **`DatabaseStorage`** edge cases.
+- 2026-04-17: **Responsiva template path must be runtime-configurable** — added `RESPONSIVA_TEMPLATE_PATH` fallback chain + docker compose mount to prevent `/app/src/templates/...` ENOENT in containerized deploys.
+- 2026-04-17: **Responsiva photo placeholders use numbered slots** (`{{FOTOS1}}..`) with legacy `{{FOTOS}}` fallback — allows per-item variable photo count while preserving backward compatibility with older templates.
+- 2026-04-17: **Placeholder matching must tolerate Word run splitting** (underline/mixed formatting) — marker replacement now scans paragraph/cell visible text, not only contiguous raw XML markers.
+- 2026-04-17: **Photo rendering should fit table cell geometry** — EMU caps tied to cell width/height + `blipFill` stretch/fillRect to prevent clipped vertical strips and improve legibility across 1–5 image layouts.
 
 ## Blockers & Open Questions
 <!-- Things that need resolution before we can plan/execute confidently. -->
@@ -56,13 +60,14 @@
 - Validate UI attachment list invalidation after HEIC upload in real browser flow - resolve by: next session QA pass
 - **DB:** Ensure **`sites`** + **`inventory_items.site_id`** exist (`migrations/add-sites.sql` or **`npm run db:migrate:sites`**); when enabling **`SITE_RBAC_ENABLED`**, run **`npm run db:migrate:site-rbac`** (`role_templates`, `user_site_roles`); ensure **`maintenance_*`**, `inventory_assignments`, and **webhook** tables exist (migration SQL or `drizzle-kit push` where safe); for outbound webhooks, run **`npm run db:migrate:webhook-outbox-claim`** (or `db:push`) so **`webhook_outbox.processing_claimed_at`** exists; if `push` asks about `inventory_bulk_undo` unique constraint, prefer **add without truncating** unless duplicates exist
 - **`npm run db:push` safety:** If Drizzle proposes **dropping** tables created outside Drizzle (e.g. **`user_sessions`**, **`login_rate_limits`** from app bootstrap), **abort** until those tables exist in `shared/schema.ts` or migrations are applied another way — avoid data loss
+- Responsiva format edge-case pending: confirm 5+ photo mixed-orientation docs remain stable after latest XML fixes in deployed container (not only local run).
 
 ## Session Notes
 <!-- Quick context for next session (where to resume and what to watch for). -->
-Last session: **2026-04-09** (calendar)
-Stopped at: **`save state`** — **Full codebase code review** written up; findings added to **`TODOS.md` § Open** (13 cards: 2×P0, 2×P1, 3×P2, 5×P3, 1×P4 backlog). No implementation of those cards in this save.
-Resume with: **`TODOS.md` Open** top — fix **`storage.updateItem`** when row missing; wrap **`upsertUserSiteRole`** in **`db.transaction`**; add tests. Then **`npm run test`** / PR path as before.
+Last session: **2026-04-17** (calendar)
+Stopped at: `save state` after responsiva debugging/implementation loop (template path env support, marker robustness, slot replacement, empty-slot pruning, photo rendering XML fix).
+Resume with: regenerate DOCX for representative items (1/2/5 photos) in docker app, validate visual output against expected grid, then either close responsiva workstream or add HEIC->JPEG conversion in responsiva embed path.
 
-Next session should start with: **P0 items in `TODOS.md` Open** (or **`npm run test`** if merging first); see **Current Position** for ordering.
+Next session should start with: run final responsiva acceptance pass in container (`/api/inventory/:id/responsiva` for 1/2/5 photos), then return to `TODOS.md` P0 items.
 
 Consider running `/dream` to consolidate what you learned this session.

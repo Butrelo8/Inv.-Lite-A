@@ -74,8 +74,12 @@ export async function registerResponsivaRoutesDefault(
   app: Express,
   input: RegisterResponsivaDefaultsInput = {},
 ): Promise<void> {
+  const envTemplatePath = process.env.RESPONSIVA_TEMPLATE_PATH?.trim();
   const templatePath =
-    input.templatePath ?? path.join(process.cwd(), "src", "templates", "responsiva_template.docx");
+    input.templatePath ??
+    (envTemplatePath && envTemplatePath.length > 0
+      ? envTemplatePath
+      : path.join(process.cwd(), "src", "templates", "responsiva_template.docx"));
   const uploadsDir = input.uploadsDir ?? uploadsPath;
 
   registerResponsivaRoutes(app, {

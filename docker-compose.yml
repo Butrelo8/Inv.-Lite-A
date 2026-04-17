@@ -25,12 +25,14 @@ services:
       BIND_HOST: 0.0.0.0
       TRUST_PROXY: "false"
       DATABASE_URL: postgresql://inventario:inventario@postgres:5432/inventario
+      RESPONSIVA_TEMPLATE_PATH: /app/src/templates/responsiva_template.docx
       # Set SESSION_SECRET securely (do not commit real secrets).
       SESSION_SECRET: "${SESSION_SECRET:-please-set-session-secret}"
       # Cookie must be non-secure over http://localhost or the browser won't send it; API then returns 401 and UI shows 0 items.
       COOKIE_SECURE: "false"
     volumes:
       - uploads_data:/app/uploads
+      - ./client/src/templates:/app/src/templates:ro
     depends_on:
       postgres:
         condition: service_healthy

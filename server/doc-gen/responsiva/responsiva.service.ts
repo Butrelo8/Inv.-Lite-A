@@ -5,9 +5,10 @@ import { formatSpanishLongDate } from "./date-es";
 import {
   removeParagraphContaining,
   replaceParagraphContainingWithXml,
+  replaceTableCellContainingWithXml,
   replacePlaceholderText,
 } from "./docx-xml";
-import { buildPhotoTableXml } from "./photo-table";
+import { buildPhotoParagraphXml, buildPhotoTableXml } from "./photo-table";
 import { embedAttachmentImages } from "./image-embedder";
 import { ensureImageContentTypes, insertImageRelationships } from "./rels-xml";
 
@@ -46,6 +47,60 @@ function sanitizeFilenameSegment(raw: string): string {
   return cleaned || "x";
 }
 
+const MAX_FOTO_SLOT_SCAN = 30;
+
+function tryReplaceParagraphContainingWithXml(xml: string, marker: string, replacementXml: string): string {
+  try {
+    return replaceParagraphContainingWithXml(xml, marker, replacementXml);
+  } catch {
+    return xml;
+  }
+}
+
+function tryReplaceTableCellContainingWithXml(xml: string, marker: string, replacementXml: string): string {
+  try {
+    return replaceTableCellContainingWithXml(xml, marker, replacementXml);
+  } catch {
+    return xml;
+  }
+}
+
+function removeStrictlyEmptyTableRows(xml: string): string {
+  return xml.replace(/<w:tr\b[^>]*>\s*(?:<w:trPr>[\s\S]*?<\/w:trPr>\s*)?<\/w:tr>/g, "");
+}
+
+function replaceNumberedPhotoSlots(
+  docXml: string,
+  entries: readonly { rId: string; docPrId: number; cxEmu: number; cyEmu: number }[],
+): { xml: string; foundAnySlot: boolean } {
+  let nextXml = docXml;
+  let foundAnySlot = false;
+  for (let slot = 1; slot <= MAX_FOTO_SLOT_SCAN; slot++) {
+    const marker = `{{FOTOS${slot}}}`;
+    const entry = entries[slot - 1];
+    const replacement = entry
+      ? buildPhotoParagraphXml({
+          rId: entry.rId,
+          docPrId: entry.docPrId,
+          cxEmu: entry.cxEmu,
+          cyEmu: entry.cyEmu,
+        })
+      : "";
+    const updated = entry
+      ? tryReplaceParagraphContainingWithXml(nextXml, marker, replacement)
+      : (() => {
+          const withoutCell = tryReplaceTableCellContainingWithXml(nextXml, marker, "");
+          if (withoutCell !== nextXml) return withoutCell;
+          return tryReplaceParagraphContainingWithXml(nextXml, marker, "");
+        })();
+    if (updated !== nextXml) {
+      foundAnySlot = true;
+      nextXml = updated;
+    }
+  }
+  return { xml: removeStrictlyEmptyTableRows(nextXml), foundAnySlot };
+}
+
 export async function generateResponsivaDocx(
   input: GenerateResponsivaInput,
 ): Promise<GeneratedResponsiva> {
@@ -77,9 +132,13 @@ export async function generateResponsivaDocx(
     resolvePath: resolveStoredFilePath,
   });
 
-  if (embedded.entries.length === 0) {
+  const slotResult = replaceNumberedPhotoSlots(docXml, embedded.entries);
+  docXml = slotResult.xml;
+
+  if (!slotResult.foundAnySlot && embedded.entries.length === 0) {
+    docXml = tryReplaceParagraphContainingWithXml(docXml, "{{FOTOS}}", "");
     docXml = removeParagraphContaining(docXml, "{{FOTOS}}");
-  } else {
+  } else if (!slotResult.foundAnySlot) {
     const tableXml = buildPhotoTableXml(
       embedded.entries.map((e) => ({
         rId: e.rId,
@@ -88,8 +147,10 @@ export async function generateResponsivaDocx(
         cyEmu: e.cyEmu,
       })),
     );
-    docXml = replaceParagraphContainingWithXml(docXml, "{{FOTOS}}", tableXml);
+    docXml = tryReplaceParagraphContainingWithXml(docXml, "{{FOTOS}}", tableXml);
+  }
 
+  if (embedded.entries.length > 0) {
     const relsEntry = zip.file(DOCUMENT_RELS_PATH);
     if (!relsEntry) throw new Error(`template missing ${DOCUMENT_RELS_PATH}`);
     const relsXml = await relsEntry.async("string");

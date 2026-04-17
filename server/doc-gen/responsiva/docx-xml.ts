@@ -18,27 +18,94 @@ export function replacePlaceholderText(xml: string, placeholderName: string, val
 
 function findParagraphRange(xml: string, marker: string): { start: number; end: number } | null {
   const markerIdx = xml.indexOf(marker);
-  if (markerIdx < 0) return null;
-
-  const openTag = "<w:p";
-  let searchFrom = markerIdx;
-  let openIdx = -1;
-  while (searchFrom >= 0) {
-    const candidate = xml.lastIndexOf(openTag, searchFrom);
-    if (candidate < 0) return null;
-    const next = xml.charAt(candidate + openTag.length);
-    if (next === ">" || next === " " || next === "/") {
-      openIdx = candidate;
-      break;
+  if (markerIdx >= 0) {
+    const openTag = "<w:p";
+    let searchFrom = markerIdx;
+    let openIdx = -1;
+    while (searchFrom >= 0) {
+      const candidate = xml.lastIndexOf(openTag, searchFrom);
+      if (candidate < 0) return null;
+      const next = xml.charAt(candidate + openTag.length);
+      if (next === ">" || next === " " || next === "/") {
+        openIdx = candidate;
+        break;
+      }
+      searchFrom = candidate - 1;
     }
-    searchFrom = candidate - 1;
-  }
-  if (openIdx < 0) return null;
+    if (openIdx < 0) return null;
 
-  const closeTag = "</w:p>";
-  const closeIdx = xml.indexOf(closeTag, markerIdx);
-  if (closeIdx < 0) return null;
-  return { start: openIdx, end: closeIdx + closeTag.length };
+    const closeTag = "</w:p>";
+    const closeIdx = xml.indexOf(closeTag, markerIdx);
+    if (closeIdx < 0) return null;
+    return { start: openIdx, end: closeIdx + closeTag.length };
+  }
+
+  // Fallback for Word run-splitting: marker may be visually contiguous but broken
+  // across multiple <w:r>/<w:t> nodes (e.g., underlined placeholders).
+  const paragraphRe = /<w:p\b[\s\S]*?<\/w:p>/g;
+  let m: RegExpExecArray | null;
+  while ((m = paragraphRe.exec(xml)) !== null) {
+    const paragraphXml = m[0];
+    const textOnly = paragraphXml
+      .replace(/<[^>]+>/g, "")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'");
+    if (textOnly.includes(marker)) {
+      return { start: m.index, end: m.index + paragraphXml.length };
+    }
+  }
+  return null;
+}
+
+function decodeXmlText(value: string): string {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+function findContainerRange(
+  xml: string,
+  marker: string,
+  tagName: "w:tc" | "w:tr" | "w:tbl",
+): { start: number; end: number } | null {
+  const markerIdx = xml.indexOf(marker);
+  if (markerIdx >= 0) {
+    const openTag = `<${tagName}`;
+    let searchFrom = markerIdx;
+    let openIdx = -1;
+    while (searchFrom >= 0) {
+      const candidate = xml.lastIndexOf(openTag, searchFrom);
+      if (candidate < 0) return null;
+      const next = xml.charAt(candidate + openTag.length);
+      if (next === ">" || next === " " || next === "/") {
+        openIdx = candidate;
+        break;
+      }
+      searchFrom = candidate - 1;
+    }
+    if (openIdx < 0) return null;
+    const closeTag = `</${tagName}>`;
+    const closeIdx = xml.indexOf(closeTag, markerIdx);
+    if (closeIdx < 0) return null;
+    return { start: openIdx, end: closeIdx + closeTag.length };
+  }
+
+  const re = new RegExp(`<${tagName}\\b[\\s\\S]*?<\\/${tagName}>`, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    const segment = m[0];
+    const textOnly = decodeXmlText(segment.replace(/<[^>]+>/g, ""));
+    if (textOnly.includes(marker)) {
+      return { start: m.index, end: m.index + segment.length };
+    }
+  }
+  return null;
 }
 
 export function removeParagraphContaining(xml: string, marker: string): string {
@@ -55,6 +122,18 @@ export function replaceParagraphContainingWithXml(
   const range = findParagraphRange(xml, marker);
   if (!range) {
     throw new Error(`paragraph containing "${marker}" not found`);
+  }
+  return xml.slice(0, range.start) + replacementXml + xml.slice(range.end);
+}
+
+export function replaceTableCellContainingWithXml(
+  xml: string,
+  marker: string,
+  replacementXml: string,
+): string {
+  const range = findContainerRange(xml, marker, "w:tc");
+  if (!range) {
+    throw new Error(`table cell containing "${marker}" not found`);
   }
   return xml.slice(0, range.start) + replacementXml + xml.slice(range.end);
 }
