@@ -114,7 +114,7 @@ export async function registerRoutes(
 
   registerWebhookRoutes(app);
   registerMaintenanceRoutes(app);
-  registerDocGenRoutes(app);
+  await registerDocGenRoutes(app);
 
   return httpServer;
 }

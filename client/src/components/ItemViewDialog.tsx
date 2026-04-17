@@ -1,8 +1,13 @@
+import { useState } from "react";
 import type { InventoryItem } from "@/hooks/use-inventory";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { AssignmentTimeline } from "@/components/AssignmentTimeline";
 import { MaintenanceTimeline } from "@/components/MaintenanceTimeline";
 import { format } from "date-fns";
+import { FileText, Loader2 } from "lucide-react";
+import { downloadResponsiva } from "@/lib/download-responsiva";
+import { useToast } from "@/hooks/use-toast";
 
 export interface ItemViewDialogProps {
   item: InventoryItem | null;
@@ -17,7 +22,31 @@ function safeText(v: unknown) {
 }
 
 export function ItemViewDialog({ item, open, onOpenChange }: ItemViewDialogProps) {
+  const { toast } = useToast();
+  const [isGenerating, setIsGenerating] = useState(false);
+
   if (!item) return null;
+
+  const handleGenerate = async () => {
+    if (isGenerating) return;
+    setIsGenerating(true);
+    try {
+      await downloadResponsiva({
+        itemId: item.id,
+        itemCode: item.code,
+        responsible: item.responsible,
+      });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description:
+          err instanceof Error ? err.message : "No se pudo generar la responsiva",
+        variant: "destructive",
+      });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -70,6 +99,13 @@ export function ItemViewDialog({ item, open, onOpenChange }: ItemViewDialogProps
             <div className="text-sm whitespace-pre-wrap text-foreground">{item.notes ? item.notes : "—"}</div>
           </div>
 
+          <div className="border-t pt-4">
+            <Button onClick={handleGenerate} disabled={isGenerating} className="gap-2">
+              {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+              Generar Responsiva
+            </Button>
+          </div>
+
           <div className="border-t pt-4 space-y-2">
             <div className="text-sm font-medium">Historial de asignaciones</div>
             <AssignmentTimeline itemId={item.id} />
@@ -84,4 +120,3 @@ export function ItemViewDialog({ item, open, onOpenChange }: ItemViewDialogProps
     </Dialog>
   );
 }
-
