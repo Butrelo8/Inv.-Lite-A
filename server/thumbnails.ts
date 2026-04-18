@@ -1,14 +1,12 @@
-import fs from "fs";
+import fsPromises from "fs/promises";
 import path from "path";
 import sharp from "sharp";
 
 const uploadsPath = path.join(process.cwd(), "uploads");
 export const thumbsPath = path.join(uploadsPath, "thumbs");
 
-export function ensureThumbsDir() {
-  if (!fs.existsSync(thumbsPath)) {
-    fs.mkdirSync(thumbsPath, { recursive: true });
-  }
+export async function ensureThumbsDir(): Promise<void> {
+  await fsPromises.mkdir(thumbsPath, { recursive: true });
 }
 
 /**
@@ -17,12 +15,20 @@ export function ensureThumbsDir() {
  * Returns the thumb filename (e.g. "42-171234.webp").
  */
 export async function ensureThumbnail(originalPath: string): Promise<string> {
-  ensureThumbsDir();
+  await ensureThumbsDir();
   const base = path.basename(originalPath, path.extname(originalPath));
   const thumbFilename = `${base}.webp`;
   const thumbFilePath = path.join(thumbsPath, thumbFilename);
 
-  if (!fs.existsSync(thumbFilePath)) {
+  let hasThumb = false;
+  try {
+    const st = await fsPromises.stat(thumbFilePath);
+    hasThumb = st.isFile();
+  } catch {
+    hasThumb = false;
+  }
+
+  if (!hasThumb) {
     await sharp(originalPath)
       .resize(200, 200, { fit: "cover", withoutEnlargement: true })
       .webp({ quality: 75 })

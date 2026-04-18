@@ -1,9 +1,18 @@
-import type { Express } from "express";
-import fs from "fs";
+import type { Express, NextFunction, Request, Response } from "express";
+import fsPromises from "fs/promises";
 import { storage } from "../storage";
 import { resolveStoredFilePath } from "../path-utils";
-import { documentsPath, documentUpload } from "../upload-config";
-import { requireAuth, requireRole } from "../route-middleware";
+import { documentsPath, documentUpload, ensureDocumentsDir } from "../upload-config";
+import { getAuthUserId, requireAuth, requireRole } from "../route-middleware";
+
+async function ensureDocumentsDirMiddleware(_req: Request, _res: Response, next: NextFunction): Promise<void> {
+  try {
+    await ensureDocumentsDir();
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
 
 export function registerEmployeeDocsRoutes(app: Express): void {
   app.get("/api/responsible", requireAuth, requireRole("editor", "admin"), async (_req, res) => {
@@ -33,29 +42,36 @@ export function registerEmployeeDocsRoutes(app: Express): void {
     res.json(versions);
   });
 
-  app.post("/api/employees/documents", requireAuth, requireRole("editor", "admin"), documentUpload.single("file"), async (req, res) => {
-    if (!req.file) {
-      return res.status(400).json({ message: "No file provided" });
-    }
-    const responsible = (req.body?.responsible as string)?.trim() || null;
-    const itemIdRaw = req.body?.itemId;
-    const itemId = itemIdRaw !== undefined && itemIdRaw !== "" ? Number(itemIdRaw) : null;
-    const documentType = (req.body?.documentType as string)?.trim() || null;
-    const expiresAtRaw = req.body?.expiresAt as string | undefined;
-    const expiresAt = expiresAtRaw && /^\d{4}-\d{2}-\d{2}$/.test(expiresAtRaw) ? expiresAtRaw : null;
-    const fileUrl = `/uploads/documents/${req.file.filename}`;
-    const doc = await storage.addEmployeeDocument({
-      responsible,
-      itemId: Number.isFinite(itemId) ? itemId : null,
-      fileUrl,
-      originalName: req.file.originalname || req.file.filename,
-      mimeType: req.file.mimetype,
-      documentType,
-      expiresAt,
-      userId: (req.user as { id?: number } | undefined)?.id,
-    });
-    res.status(201).json(doc);
-  });
+  app.post(
+    "/api/employees/documents",
+    requireAuth,
+    requireRole("editor", "admin"),
+    ensureDocumentsDirMiddleware,
+    documentUpload.single("file"),
+    async (req, res) => {
+      if (!req.file) {
+        return res.status(400).json({ message: "No file provided" });
+      }
+      const responsible = (req.body?.responsible as string)?.trim() || null;
+      const itemIdRaw = req.body?.itemId;
+      const itemId = itemIdRaw !== undefined && itemIdRaw !== "" ? Number(itemIdRaw) : null;
+      const documentType = (req.body?.documentType as string)?.trim() || null;
+      const expiresAtRaw = req.body?.expiresAt as string | undefined;
+      const expiresAt = expiresAtRaw && /^\d{4}-\d{2}-\d{2}$/.test(expiresAtRaw) ? expiresAtRaw : null;
+      const fileUrl = `/uploads/documents/${req.file.filename}`;
+      const doc = await storage.addEmployeeDocument({
+        responsible,
+        itemId: Number.isFinite(itemId) ? itemId : null,
+        fileUrl,
+        originalName: req.file.originalname || req.file.filename,
+        mimeType: req.file.mimetype,
+        documentType,
+        expiresAt,
+        userId: getAuthUserId(req) ?? undefined,
+      });
+      res.status(201).json(doc);
+    },
+  );
 
   app.patch("/api/employees/documents/:id", requireAuth, requireRole("editor", "admin"), async (req, res) => {
     const id = Number(req.params.id);
@@ -87,12 +103,19 @@ export function registerEmployeeDocsRoutes(app: Express): void {
         documentId: id,
         fileUrl: deleted.fileUrl,
       });
-    } else if (fs.existsSync(filePath)) {
+    } else {
       try {
-        const st = fs.statSync(filePath);
-        if (st.isFile()) fs.unlinkSync(filePath);
-      } catch (err) {
-        console.error("Failed to unlink employee document file", { documentId: id, filePath }, err);
+        const st = await fsPromises.stat(filePath);
+        if (st.isFile()) {
+          await fsPromises.unlink(filePath).catch((unlinkErr: NodeJS.ErrnoException) => {
+            if (unlinkErr.code !== "ENOENT") throw unlinkErr;
+          });
+        }
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException)?.code;
+        if (code !== "ENOENT") {
+          console.error("Failed to unlink employee document file", { documentId: id, filePath }, err);
+        }
       }
     }
     res.status(204).send();

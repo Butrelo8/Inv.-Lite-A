@@ -84,3 +84,11 @@ coverage/
 # Misc
 Imagen2.jpg
 inventory-template (1) (1).csv
+
+# Cursor
+.cursor
+.cursor/rules
+.cursor/plans
+
+# docs
+.docs/

@@ -1,4 +1,17 @@
-import { pgTable, text, serial, integer, date, timestamp, jsonb, index, uniqueIndex, boolean } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  serial,
+  integer,
+  date,
+  timestamp,
+  json,
+  jsonb,
+  index,
+  uniqueIndex,
+  boolean,
+  varchar,
+} from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -187,6 +200,40 @@ export const employeeDocuments = pgTable("employee_documents", {
 
 export type EmployeeDocument = typeof employeeDocuments.$inferSelect;
 
+/**
+ * Express session store (connect-pg-simple). Created at startup by
+ * `server/auth.ts` and by `migrations/add-bootstrap-tables.sql`. Keep columns,
+ * index name, and PK in lockstep with both of those.
+ *
+ * NOTE: column type is `json` (not `jsonb`) — connect-pg-simple writes `json`
+ * and the existing bootstrap SQL matches that.
+ */
+export const userSessions = pgTable(
+  "user_sessions",
+  {
+    sid: varchar("sid").primaryKey().notNull(),
+    sess: json("sess").notNull().$type<Record<string, unknown>>(),
+    expire: timestamp("expire", { precision: 6 }).notNull(),
+  },
+  (table) => ({
+    expireIdx: index("IDX_user_sessions_expire").on(table.expire),
+  }),
+);
+
+export type UserSession = typeof userSessions.$inferSelect;
+
+/**
+ * Per-IP and per-IP+username login throttle state. Created at startup by
+ * `server/rate-limiter.ts` and by `migrations/add-bootstrap-tables.sql`.
+ */
+export const loginRateLimits = pgTable("login_rate_limits", {
+  key: text("key").primaryKey().notNull(),
+  windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+  count: integer("count").notNull(),
+});
+
+export type LoginRateLimit = typeof loginRateLimits.$inferSelect;
+
 export const opsEvents = pgTable(
   "ops_events",
   {
@@ -195,7 +242,7 @@ export const opsEvents = pgTable(
     severity: text("severity").notNull(),
     source: text("source").notNull().default("api"),
     environment: text("environment").notNull().default("development"),
-    payload: jsonb("payload"),
+    payload: jsonb("payload").$type<Record<string, unknown>>(),
     userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
     ip: text("ip"),
     requestId: text("request_id"),

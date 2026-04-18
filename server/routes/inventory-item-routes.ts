@@ -1,5 +1,5 @@
 ﻿import type { Express } from "express";
-import fs from "fs";
+import fsPromises from "fs/promises";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import {
@@ -9,17 +9,12 @@ import {
   inventoryHistory,
 } from "@shared/schema";
 import { eq, and, isNull } from "drizzle-orm";
-import { db, pool } from "../db";
+import { db } from "../db";
 import { httpStatusError } from "../http-status-error";
-import {
-  BULK_UNDO_WINDOW_MIN,
-  buildDeleteHistoryRemarks,
-  buildUndoToken,
-} from "../inventory-bulk-undo-helpers";
 import { emitOpsEvent } from "../ops-events";
 import { parseSiteIdQuery, requireInventoryListContext } from "../inventory-list-context";
 import { resolveStoredFilePath } from "../path-utils";
-import { getClientIp, requireAuth, requireRole } from "../route-middleware";
+import { getAuthUserId, getClientIp, requireAuth, requireRole } from "../route-middleware";
 import { SITE_CAPABILITIES } from "@shared/site-rbac";
 import { getSiteAccess, can, forbidSiteRbac, itemSiteAllowed } from "../site-rbac-access";
 import { storage } from "../storage";
@@ -111,7 +106,7 @@ export function registerInventoryItemCrudRoutes(app: Express): void {
     if (!parsed.success) {
       return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Invalid body", field: parsed.error.errors[0]?.path.join(".") });
     }
-    const userId = Number.isFinite((req as any).user?.id) ? (req as any).user.id : null;
+    const userId = getAuthUserId(req);
     try {
       const out = await db.transaction(async (tx) => {
         const [item] = await tx.select().from(inventoryItems).where(eq(inventoryItems.id, id));
@@ -207,7 +202,7 @@ export function registerInventoryItemCrudRoutes(app: Express): void {
     if (!parsed.success) {
       return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Invalid body", field: parsed.error.errors[0]?.path.join(".") });
     }
-    const userId = Number.isFinite((req as any).user?.id) ? (req as any).user.id : null;
+    const userId = getAuthUserId(req);
     try {
       const out = await db.transaction(async (tx) => {
         const [item] = await tx.select().from(inventoryItems).where(eq(inventoryItems.id, id));
@@ -275,7 +270,7 @@ export function registerInventoryItemCrudRoutes(app: Express): void {
         return;
       }
       const item = await storage.createItem(input);
-      const userId = (req as any).user?.id;
+      const userId = getAuthUserId(req);
       storage
         .addHistoryRecord({ productId: item.id, companyId: item.companyId ?? null, transactionType: "CREATE", quantity: item.units, userId, remarks: item.name })
         .catch((err) => {
@@ -325,10 +320,7 @@ export function registerInventoryItemCrudRoutes(app: Express): void {
         return;
       }
       const item = await storage.updateItem(Number(req.params.id), input);
-      if (!item) {
-        return res.status(404).json({ message: 'Item not found' });
-      }
-      const userId = (req as any).user?.id;
+      const userId = getAuthUserId(req);
       const qtyDelta = (input.units ?? prevItem?.units ?? item.units) - (prevItem?.units ?? 0);
       storage
         .addHistoryRecord({ productId: item.id, companyId: item.companyId ?? null, transactionType: "ADJUSTMENT", quantity: qtyDelta, userId, remarks: item.name })
@@ -354,6 +346,7 @@ export function registerInventoryItemCrudRoutes(app: Express): void {
       }
       const st = (err as Error & { status?: number }).status;
       if (st === 400) return res.status(400).json({ message: (err as Error).message });
+      if (st === 404) return res.status(404).json({ message: (err as Error).message });
       throw err;
     }
   });
@@ -372,31 +365,16 @@ export function registerInventoryItemCrudRoutes(app: Express): void {
       return;
     }
     const attachments = await storage.getAttachments(id);
-    const undoToken = buildUndoToken();
-    const undoExpiresAt = new Date(Date.now() + BULK_UNDO_WINDOW_MIN * 60_000);
-    const payload = { items: [item], attachments, deletedIds: [id] };
-    const itemName = item.name ?? `Item #${id}`;
-    const remarks = buildDeleteHistoryRemarks("DELETE", itemName, undoToken);
-    const userId = (req as any).user?.id;
-    const client = await pool.connect();
+    const userId = getAuthUserId(req);
     try {
-      await client.query("begin");
-      await client.query(
-        `insert into inventory_bulk_undo (token, action_type, payload, expires_at, created_by_user_id)
-         values ($1, $2, $3::jsonb, $4, $5)`,
-        [undoToken, "single_delete", JSON.stringify(payload), undoExpiresAt.toISOString(), userId ?? null],
-      );
-      // Keep FK integrity: write DELETE history while the item row still exists.
-      await client.query(
-        `insert into inventory_history (product_id, company_id, transaction_type, quantity, user_id, remarks)
-         values ($1, $2, $3, $4, $5, $6)`,
-        [id, item.companyId ?? null, "DELETE", item.units ?? 0, userId ?? null, remarks],
-      );
-      await client.query("delete from inventory_items where id = $1", [id]);
-      await client.query("commit");
+      const { undoToken, undoExpiresAt } = await storage.deleteInventoryItemWithUndo({
+        item,
+        attachments,
+        userId,
+      });
+      res.status(200).json({ deleted: 1, undoToken, undoExpiresAt: undoExpiresAt.toISOString() });
     } catch (err) {
-      await client.query("rollback").catch(() => undefined);
-      console.error("History log failed (DELETE)", { productId: id, userId }, err);
+      console.error("Delete inventory item failed", { productId: id, userId }, err);
       void emitOpsEvent({
         eventType: "job.history_write_failure",
         severity: "critical",
@@ -407,10 +385,7 @@ export function registerInventoryItemCrudRoutes(app: Express): void {
         payload: { action: "DELETE", productId: id, error: err instanceof Error ? err.message : String(err) },
       });
       return res.status(500).json({ message: "Delete failed" });
-    } finally {
-      client.release();
     }
-    res.status(200).json({ deleted: 1, undoToken, undoExpiresAt: undoExpiresAt.toISOString() });
   });
 
 }
@@ -473,12 +448,19 @@ export function registerInventoryAttachmentRoutes(app: Express): void {
         attachmentId,
         imageUrl: deleted.imageUrl,
       });
-    } else if (fs.existsSync(imgPath)) {
+    } else {
       try {
-        const st = fs.statSync(imgPath);
-        if (st.isFile()) fs.unlinkSync(imgPath);
-      } catch (err) {
-        console.error("Failed to unlink inventory attachment image", { itemId, attachmentId, imgPath }, err);
+        const st = await fsPromises.stat(imgPath);
+        if (st.isFile()) {
+          await fsPromises.unlink(imgPath).catch((unlinkErr: NodeJS.ErrnoException) => {
+            if (unlinkErr.code !== "ENOENT") throw unlinkErr;
+          });
+        }
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException)?.code;
+        if (code !== "ENOENT") {
+          console.error("Failed to unlink inventory attachment image", { itemId, attachmentId, imgPath }, err);
+        }
       }
     }
     if (item.imageUrl === deleted.imageUrl) {

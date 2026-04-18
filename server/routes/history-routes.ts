@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { storage } from "../storage";
 import { pool } from "../db";
-import { requireAuth, requireRole } from "../route-middleware";
+import { getAuthUserId, requireAuth, requireRole } from "../route-middleware";
 import { extractUndoTokenFromRemarks } from "../inventory-bulk-undo-helpers";
 import { restoreDeleteUndoByToken } from "../inventory-bulk-undo";
 import { parseHistoryPagination } from "../validation/query-params";
@@ -68,9 +68,7 @@ export function registerHistoryRoutes(app: Express): void {
   app.post("/api/history/:id/revert", requireAuth, requireRole("editor", "admin"), async (req, res) => {
     const historyId = Number(req.params.id);
     if (!Number.isFinite(historyId)) return res.status(400).json({ message: "Invalid history id" });
-    const userId = Number.isFinite((req as { user?: { id?: number } }).user?.id)
-      ? (req as { user: { id: number } }).user.id
-      : null;
+    const userId = getAuthUserId(req);
     const historyRes = await pool.query(
       `select id, transaction_type, remarks
        from inventory_history

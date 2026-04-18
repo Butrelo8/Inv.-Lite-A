@@ -5,7 +5,7 @@ import { emitOpsEvent } from "./ops-events";
 import { isSiteRbacEnabled, isSiteScopingEnabled } from "./site-config";
 import { getSiteAccess } from "./site-rbac-access";
 
-export { getAuthUser } from "./auth-user";
+export { getAuthUser, getAuthUserId } from "./auth-user";
 
 /** Site feature flags included in auth responses. */
 export function authEnvFlags() {
@@ -31,6 +31,19 @@ export function getClientIp(req: Request): string {
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (req.isAuthenticated?.()) return next();
   res.status(401).json({ message: "Not authenticated" });
+}
+
+/**
+ * After `requireAuth`, require a Passport user with a finite numeric id.
+ * Sends **401** `{ message: "Sesión expirada" }` if the session user is missing or invalid.
+ */
+export function requireAuthUser(req: Request, res: Response): Express.User | null {
+  const user = getAuthUser(req);
+  if (!user || !Number.isFinite(user.id)) {
+    res.status(401).json({ message: "Sesión expirada" });
+    return null;
+  }
+  return user;
 }
 
 /** Require user to have one of the given roles. Use after requireAuth. Returns 403 if forbidden. */

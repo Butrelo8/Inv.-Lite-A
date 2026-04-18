@@ -1,11 +1,15 @@
 import path from "path";
-import fs from "fs";
 import fsPromises from "fs/promises";
 import type { Express } from "express";
 import multer from "multer";
 
 export const uploadsPath = path.join(process.cwd(), "uploads");
 export const documentsPath = path.join(process.cwd(), "uploads", "documents");
+
+/** Ensures employee document uploads directory exists (call before `documentUpload` multer). */
+export async function ensureDocumentsDir(): Promise<void> {
+  await fsPromises.mkdir(documentsPath, { recursive: true });
+}
 
 // Thumbnail hardening: avoid CPU/disk exhaustion from repeated on-demand generation.
 export const THUMB_RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
@@ -88,7 +92,6 @@ export const csvUpload = multer({
 
 const documentStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    if (!fs.existsSync(documentsPath)) fs.mkdirSync(documentsPath, { recursive: true });
     cb(null, documentsPath);
   },
   filename: (_req, file, cb) => {

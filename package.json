@@ -14,6 +14,7 @@
     "db:migrate:sites": "tsx script/migrate-sites.ts",
     "db:migrate:site-rbac": "tsx script/migrate-site-rbac.ts",
     "db:migrate:webhook-outbox-claim": "tsx script/migrate-webhook-outbox-claim.ts",
+    "db:migrate:bootstrap-tables": "tsx script/migrate-bootstrap-tables.ts",
     "bulk-import-images": "tsx script/bulk-import-images.ts",
     "convert-heic": "tsx script/convert-heic-to-jpg.ts",
     "create-user": "tsx script/create-user.ts",

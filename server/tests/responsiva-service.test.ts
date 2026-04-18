@@ -149,7 +149,7 @@ test("fills placeholders and embeds images", async () => {
     assert.match(docXml, /Responsable: Ana/);
     assert.doesNotMatch(docXml, /\{\{FOTOS\}\}/);
     assert.match(docXml, /<w:tbl>/);
-    assert.doesNotMatch(docXml, /<a:stretch>/);
+    assert.match(docXml, /<a:stretch><a:fillRect\/><\/a:stretch>/);
     assert.ok(z.file("word/media/img_0.jpeg"));
     assert.ok(z.file("word/media/img_1.png"));
 

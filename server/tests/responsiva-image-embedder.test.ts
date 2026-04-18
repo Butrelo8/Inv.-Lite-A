@@ -56,8 +56,9 @@ test("embedAttachmentImages writes bytes into word/media and returns entries", a
   assert.equal(result.entries[0]!.docPrId, 1000);
   assert.equal(result.entries[0]!.ext, "jpeg");
   assert.equal(result.entries[0]!.mediaTarget, "media/img_0.jpeg");
-  assert.equal(result.entries[0]!.cxEmu, 2800000);
-  assert.equal(result.entries[0]!.cyEmu, 2800000);
+  // 1×1 PNG scales to the square that fits the table-cell EMU cap (not legacy 2.8M box).
+  assert.equal(result.entries[0]!.cxEmu, 1600200);
+  assert.equal(result.entries[0]!.cyEmu, 1600200);
   assert.equal(result.entries[1]!.rId, "rId101");
   assert.equal(result.entries[1]!.ext, "png");
   assert.deepEqual(Array.from(result.extensions).sort(), ["jpeg", "png"]);

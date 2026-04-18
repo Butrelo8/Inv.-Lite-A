@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import type { Server } from "http";
+import { pool } from "./db";
 import { storage } from "./storage";
 import { getSiteAccess } from "./site-rbac-access";
 import { emitOpsEvent } from "./ops-events";
@@ -25,6 +26,15 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  app.get("/health", async (_req, res) => {
+    try {
+      await pool.query("select 1");
+      res.status(200).json({ status: "ok", database: "ok" });
+    } catch {
+      res.status(503).json({ status: "unavailable", database: "error" });
+    }
+  });
+
   // CSRF mitigation for cookie-authenticated users.
   // For state-changing requests we only allow same-origin browser requests by validating
   // `Origin` or `Referer` against the current request `Host`.

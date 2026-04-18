@@ -5,7 +5,7 @@ import { maintenanceEvents, maintenanceSchedules } from "@shared/schema";
 import { SITE_CAPABILITIES } from "@shared/site-rbac";
 import { db } from "../db";
 import { parseSiteIdQuery, requireInventoryListContext } from "../inventory-list-context";
-import { requireAuth, requireRole } from "../route-middleware";
+import { getAuthUserId, requireAuth, requireRole } from "../route-middleware";
 import {
   can,
   forbidSiteRbac,
@@ -57,7 +57,7 @@ export function registerMaintenanceRoutes(app: Express): void {
       return res.status(409).json({ message: `An active schedule of type '${parsed.data.scheduleType}' already exists.` });
     }
 
-    const userId = Number.isFinite((req as any).user?.id) ? (req as any).user.id : null;
+    const userId = getAuthUserId(req);
     const nextDueAt = parsed.data.startDate; // Initially due on start date
 
     try {
@@ -159,7 +159,7 @@ export function registerMaintenanceRoutes(app: Express): void {
       return;
     }
 
-    const userId = Number.isFinite((req as any).user?.id) ? (req as any).user.id : null;
+    const userId = getAuthUserId(req);
 
     try {
       const result = await db.transaction(async (tx) => {

@@ -3,7 +3,7 @@ import PDFDocument from "pdfkit";
 import { loadExecutiveSummary } from "../load-executive-summary";
 import { renderExecutiveSummaryPdf } from "../render-executive-summary-pdf";
 import { parseSiteIdQuery, requireInventoryListContext } from "../inventory-list-context";
-import { requireAuth, requireRole } from "../route-middleware";
+import { getAuthUser, requireAuth, requireRole } from "../route-middleware";
 import { storage } from "../storage";
 import { parseOpsHealthEventsQuery } from "../validation/query-params";
 
@@ -11,7 +11,7 @@ export function registerReportsOpsRoutes(app: Express): void {
   app.get("/api/reports/executive-summary", requireAuth, async (req, res) => {
     const ctx = await requireInventoryListContext(req, res, parseSiteIdQuery(req));
     if (!ctx) return;
-    const role = String((req.user as Express.User | undefined)?.role ?? "viewer");
+    const role = String(getAuthUser(req)?.role ?? "viewer");
     const payload = await loadExecutiveSummary(storage, {
       role,
       siteId: ctx.siteId,
@@ -23,7 +23,7 @@ export function registerReportsOpsRoutes(app: Express): void {
   app.get("/api/reports/executive-summary/pdf", requireAuth, async (req, res) => {
     const ctx = await requireInventoryListContext(req, res, parseSiteIdQuery(req));
     if (!ctx) return;
-    const role = String((req.user as Express.User | undefined)?.role ?? "viewer");
+    const role = String(getAuthUser(req)?.role ?? "viewer");
     try {
       const payload = await loadExecutiveSummary(storage, {
         role,

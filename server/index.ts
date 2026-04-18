@@ -1,12 +1,13 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import path from "path";
-import fs from "fs";
+import fsPromises from "fs/promises";
 import { configureAuth } from "./auth";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { ensureThumbsDir } from "./thumbnails";
+import { getAuthUserId } from "./auth-user";
 import { emitOpsEvent, ensureOpsEventsTable } from "./ops-events";
 import { startWebhookPoller } from "./webhooks";
 import { shutdownPdfService } from "./doc-gen/pdf/pdf.service";
@@ -14,12 +15,7 @@ import { shutdownPdfService } from "./doc-gen/pdf/pdf.service";
 const app = express();
 const SLOW_REQUEST_MS = parseInt(process.env.OPS_SLOW_REQUEST_MS || "1000", 10);
 
-// Ensure uploads and thumbnails directories exist and serve static files
 const uploadsPath = path.join(process.cwd(), "uploads");
-if (!fs.existsSync(uploadsPath)) {
-  fs.mkdirSync(uploadsPath, { recursive: true });
-}
-ensureThumbsDir();
 const httpServer = createServer(app);
 
 declare module "http" {
@@ -28,15 +24,27 @@ declare module "http" {
   }
 }
 
+/**
+ * Captures raw JSON bytes on `req.rawBody` while `express.json` parses.
+ * Reserved for future inbound webhook signature verification (HMAC over raw body);
+ * no route reads `req.rawBody` today — do not remove without replacing that hook.
+ *
+ * `limit` is explicit so behavior does not depend on Express defaults; 1 MB fits the
+ * largest JSON payloads in use (bulk inventory update ≤200 ids + patch fields,
+ * executive summary inputs). Multipart uploads use multer’s own limits.
+ */
+function captureJsonRawBody(req: Request, _res: Response, buf: Buffer, _encoding: string): void {
+  req.rawBody = buf;
+}
+
 app.use(
   express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
+    limit: "1mb",
+    verify: captureJsonRawBody,
   }),
 );
 
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 
 if (process.env.TRUST_PROXY === "true") {
   app.set("trust proxy", 1);
@@ -77,7 +85,7 @@ app.use((req, res, next) => {
 
       log(logLine);
 
-      const userId = Number.isFinite((req as any).user?.id) ? (req as any).user.id : null;
+      const userId = getAuthUserId(req);
       const ip = (req.ip || "unknown").toString();
       if (res.statusCode >= 400 && res.statusCode < 500) {
         void emitOpsEvent({
@@ -119,6 +127,14 @@ app.use((req, res, next) => {
 
 (async () => {
   try {
+    await fsPromises.mkdir(uploadsPath, { recursive: true });
+    await ensureThumbsDir();
+  } catch (err) {
+    console.error("Failed to ensure upload directories", err);
+    process.exit(1);
+  }
+
+  try {
     await ensureOpsEventsTable();
   } catch (err) {
     console.error("Failed to ensure ops_events table exists", err);
@@ -127,7 +143,16 @@ app.use((req, res, next) => {
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) {
+      return next(err);
+    }
+
     const status = err.status || err.statusCode || 500;
+    // express.json / body-parser when `limit` is exceeded (avoid default HTML error page)
+    if (status === 413 || err?.type === "entity.too.large") {
+      return res.status(413).json({ message: "Payload too large" });
+    }
+
     const message = err.message || "Internal Server Error";
 
     console.error("Internal Server Error:", err);
@@ -140,10 +165,6 @@ app.use((req, res, next) => {
       ip: (_req.ip || "unknown").toString(),
       payload: { status, message },
     });
-
-    if (res.headersSent) {
-      return next(err);
-    }
 
     return res.status(status).json({ message });
   });

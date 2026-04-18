@@ -165,3 +165,26 @@ Optional env flags:
 
 - `INTEGRITY_REPORT_DIR=<path>` for custom report output folder.
 - `INTEGRITY_SAMPLE_LIMIT=25` to control max sample rows captured per check.
+
+---
+
+## Do not drop the bootstrap tables
+
+Three tables live in both `shared/schema.ts` and the app's startup SQL
+(`server/auth.ts`, `server/rate-limiter.ts`, `server/ops-events.ts`):
+
+- `user_sessions` — Express session store (connect-pg-simple)
+- `login_rate_limits` — per-IP/username login throttle
+- `ops_events` — security / observability event log
+
+If `npx drizzle-kit push` ever proposes **dropping** any of these, **answer no**.
+That only happens when the Drizzle definitions have drifted from the DB; fix
+the definitions first. To re-create all three on a fresh DB without starting
+the server, apply the consolidated migration:
+
+```bash
+npm run db:migrate:bootstrap-tables
+```
+
+The migration is idempotent — safe to run against an already-populated
+database; every statement is guarded by `IF NOT EXISTS` or a `DO $$` block.

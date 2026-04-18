@@ -39,7 +39,7 @@ async function startTestServer(roleMode: RoleMode): Promise<{ baseUrl: string; h
   // Minimal endpoint for CSRF tests.
   app.post("/api/csrf-test", (_req, res) => res.status(204).send());
 
-  ensureThumbsDir();
+  await ensureThumbsDir();
 
   await new Promise<void>((resolve) => {
     httpServer.listen(0, "127.0.0.1", () => resolve());
