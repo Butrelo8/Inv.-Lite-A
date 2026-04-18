@@ -12,6 +12,7 @@ import {
   sites,
   maintenanceSchedules,
   maintenanceEvents,
+  inventoryBulkUndo,
   type InventoryItem,
   type CreateItemRequest,
   type UpdateItemRequest,
@@ -35,12 +36,17 @@ import {
 } from "@shared/schema";
 import type { OpsEventSeverity, OpsEventType, OpsSummaryResponse } from "@shared/ops-health";
 import type { ExecutiveSummaryAssetHealth } from "@shared/executive-summary";
-import { eq, ilike, or, desc, and, gte, lte, isNull, count, inArray, sql, gt } from "drizzle-orm";
-import { alias } from "drizzle-orm/pg-core";
+import { eq, or, desc, asc, and, gte, lte, isNull, isNotNull, count, inArray, sql, gt, ne, type SQL } from "drizzle-orm";
+import { alias, type PgColumn } from "drizzle-orm/pg-core";
 import { pool } from "./db";
+import { httpStatusError } from "./http-status-error";
+import { BULK_UNDO_WINDOW_MIN, buildDeleteHistoryRemarks, buildUndoToken } from "./inventory-bulk-undo-helpers";
+import { insertInventoryHistoryBulk, type InventoryHistoryInsertRow } from "./inventory-bulk-helpers";
+import { ilikeContainsPattern } from "./sql-like-escape";
 import { suggestCode } from "./code-generator";
 import { isSiteScopingEnabled } from "./site-config";
 import { redactWebhookEndpointSecret, redactWebhookEndpointSecrets } from "./webhook-endpoint-public";
+import { getCachedOpsSummary } from "./ops-summary-cache";
 
 /** Admin PATCH fields + `updatedAt` for `db.update(webhookEndpoints).set(...)`. */
 type WebhookEndpointUpdateSet = Partial<
@@ -52,6 +58,15 @@ function badRequest(message: string): never {
   e.status = 400;
   throw e;
 }
+
+/** Substring ILIKE with `%` / `_` in user input treated literally (`ESCAPE '\\'`). */
+function columnIlikeContains(column: PgColumn, rawSearch: string): SQL {
+  const pattern = ilikeContainsPattern(rawSearch);
+  return sql`${column} ILIKE ${pattern} ESCAPE '\\'`;
+}
+
+/** Display label for `inventory_items.responsible` (trim + empty/null → "Equipo de trabajo"). */
+const inventoryResponsibleDisplaySql = sql`coalesce(nullif(btrim(${inventoryItems.responsible}), ''), 'Equipo de trabajo')`;
 
 type SharedNoteWithAuthor = SharedNote & { authorUsername: string | null };
 
@@ -127,7 +142,11 @@ export interface IStorage {
   getItemsByIds(ids: number[], restrictToSiteIds?: number[]): Promise<InventoryItem[]>;
   createItem(item: CreateItemRequest): Promise<InventoryItem>;
   updateItem(id: number, updates: UpdateItemRequest): Promise<InventoryItem>;
-  deleteItem(id: number): Promise<void>;
+  deleteInventoryItemWithUndo(params: {
+    item: InventoryItem;
+    attachments: { id: number; imageUrl: string }[];
+    userId: number | null;
+  }): Promise<{ undoToken: string; undoExpiresAt: Date }>;
   getAttachments(itemId: number): Promise<{ id: number; imageUrl: string }[]>;
   addAttachment(itemId: number, imageUrl: string): Promise<{ id: number; imageUrl: string }>;
   deleteAttachment(attachmentId: number): Promise<{ imageUrl: string } | undefined>;
@@ -140,6 +159,7 @@ export interface IStorage {
     userId?: number | null;
     remarks?: string | null;
   }): Promise<InventoryHistoryEntry>;
+  addHistoryRecordsBulk(records: InventoryHistoryInsertRow[]): Promise<void>;
   getHistory(limit?: number, offset?: number, productId?: number, filters?: { transactionType?: string; userId?: number; dateFrom?: string; dateTo?: string; search?: string }): Promise<(InventoryHistoryEntry & { productCode?: string | null; productName?: string | null; userName?: string | null; companyName?: string | null })[]>;
   getHistoryCount(productId?: number, filters?: { transactionType?: string; userId?: number; dateFrom?: string; dateTo?: string; search?: string }): Promise<number>;
   getHistoryUsers(): Promise<{ userId: number; userName: string }[]>;
@@ -263,12 +283,14 @@ export class DatabaseStorage implements IStorage {
   ): Parameters<typeof and>[0][] {
     const conditions: Parameters<typeof and>[0][] = [];
     if (search) {
-      conditions.push(or(
-        ilike(inventoryItems.name, `%${search}%`),
-        ilike(inventoryItems.code, `%${search}%`),
-        ilike(inventoryItems.category, `%${search}%`),
-        ilike(inventoryItems.responsible, `%${search}%`)
-      )!);
+      conditions.push(
+        or(
+          columnIlikeContains(inventoryItems.name, search),
+          columnIlikeContains(inventoryItems.code, search),
+          columnIlikeContains(inventoryItems.category, search),
+          columnIlikeContains(inventoryItems.responsible, search),
+        )!,
+      );
     }
     if (category) conditions.push(eq(inventoryItems.category, category));
     if (responsible) {
@@ -293,6 +315,18 @@ export class DatabaseStorage implements IStorage {
     if (addedAfter) conditions.push(gte(inventoryItems.createdAt, new Date(addedAfter + "T00:00:00.000Z")));
     if (modifiedAfter) conditions.push(gte(inventoryItems.updatedAt, new Date(modifiedAfter + "T00:00:00.000Z")));
     return conditions;
+  }
+
+  /** Site filters for inventory aggregate queries (aligned with `getFilterOptions` / list guards). */
+  private buildInventoryAggregateSiteConditions(siteId?: number, restrictToSiteIds?: number[]): SQL[] {
+    const conds: SQL[] = [];
+    const siteScoped = isSiteScopingEnabled() && siteId != null;
+    if (siteScoped) conds.push(eq(inventoryItems.siteId, siteId!));
+    if (restrictToSiteIds != null) {
+      if (restrictToSiteIds.length === 0) conds.push(sql`false`);
+      else conds.push(inArray(inventoryItems.siteId, restrictToSiteIds));
+    }
+    return conds;
   }
 
   async getItems(
@@ -416,28 +450,49 @@ export class DatabaseStorage implements IStorage {
     siteId?: number,
     restrictToSiteIds?: number[],
   ): Promise<{ categories: string[]; responsible: string[]; companies: { id: number; name: string }[] }> {
-    const siteScoped = isSiteScopingEnabled() && siteId != null;
-    const invConds: Parameters<typeof and>[0][] = [];
-    if (siteScoped) invConds.push(eq(inventoryItems.siteId, siteId!));
-    if (restrictToSiteIds != null) {
-      if (restrictToSiteIds.length === 0) invConds.push(sql`false`);
-      else invConds.push(inArray(inventoryItems.siteId, restrictToSiteIds));
+    if (restrictToSiteIds != null && restrictToSiteIds.length === 0) {
+      return { categories: [], responsible: [], companies: [] };
     }
-    const items =
-      invConds.length > 0
-        ? await db
-            .select({ category: inventoryItems.category, responsible: inventoryItems.responsible })
-            .from(inventoryItems)
-            .where(and(...invConds))
-        : await db.select({ category: inventoryItems.category, responsible: inventoryItems.responsible }).from(inventoryItems);
-    const categories = Array.from(new Set(items.map((r) => r.category).filter(Boolean))).sort() as string[];
-    const respSet = new Set<string>();
-    for (const r of items) {
-      const val = r.responsible?.trim() || "Equipo de trabajo";
-      if (val) respSet.add(val);
-    }
-    const responsible = Array.from(respSet).sort();
-    const companyList = await db.select({ id: companies.id, name: companies.name }).from(companies).orderBy(companies.name);
+
+    const invConds = this.buildInventoryAggregateSiteConditions(siteId, restrictToSiteIds);
+    const siteWhere = invConds.length > 0 ? and(...invConds) : undefined;
+    const categoryBase = and(isNotNull(inventoryItems.category), ne(inventoryItems.category, ""));
+
+    const categoriesQuery = siteWhere
+      ? db
+          .selectDistinct({ category: inventoryItems.category })
+          .from(inventoryItems)
+          .where(and(categoryBase, siteWhere))
+          .orderBy(inventoryItems.category)
+      : db
+          .selectDistinct({ category: inventoryItems.category })
+          .from(inventoryItems)
+          .where(categoryBase)
+          .orderBy(inventoryItems.category);
+
+    const responsibleQuery = siteWhere
+      ? db
+          .select({ name: inventoryResponsibleDisplaySql })
+          .from(inventoryItems)
+          .where(siteWhere)
+          .groupBy(inventoryResponsibleDisplaySql)
+          .orderBy(asc(inventoryResponsibleDisplaySql))
+      : db
+          .select({ name: inventoryResponsibleDisplaySql })
+          .from(inventoryItems)
+          .groupBy(inventoryResponsibleDisplaySql)
+          .orderBy(asc(inventoryResponsibleDisplaySql));
+
+    const companiesQuery = db.select({ id: companies.id, name: companies.name }).from(companies).orderBy(companies.name);
+
+    const [categoryRows, responsibleRows, companyList] = await Promise.all([
+      categoriesQuery,
+      responsibleQuery,
+      companiesQuery,
+    ]);
+
+    const categories = categoryRows.map((r) => r.category as string);
+    const responsible = responsibleRows.map((r) => String(r.name));
     return { categories, responsible, companies: companyList };
   }
 
@@ -534,15 +589,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getResponsibleWithCounts(): Promise<{ name: string; count: number }[]> {
-    const rows = await db.select({ responsible: inventoryItems.responsible }).from(inventoryItems);
-    const map = new Map<string, number>();
-    for (const r of rows) {
-      const name = r.responsible?.trim() || "Equipo de trabajo";
-      map.set(name, (map.get(name) ?? 0) + 1);
-    }
-    return Array.from(map.entries())
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count);
+    const rows = await db
+      .select({
+        name: inventoryResponsibleDisplaySql,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(inventoryItems)
+      .groupBy(inventoryResponsibleDisplaySql)
+      .orderBy(desc(sql`count(*)::int`), asc(inventoryResponsibleDisplaySql));
+    return rows.map((r) => ({ name: String(r.name), count: Number(r.count) }));
   }
 
   async resolveTargetSiteIdForCreate(body: { siteId?: number }): Promise<number> {
@@ -598,12 +653,7 @@ export class DatabaseStorage implements IStorage {
   async updateItem(id: number, updates: UpdateItemRequest): Promise<InventoryItem> {
     const [current] = await db.select().from(inventoryItems).where(eq(inventoryItems.id, id));
     if (!current) {
-      const [updated] = await db
-        .update(inventoryItems)
-        .set({ ...updates, updatedAt: new Date() })
-        .where(eq(inventoryItems.id, id))
-        .returning();
-      return updated!;
+      throw httpStatusError(404, "Item not found");
     }
     const scoping = isSiteScopingEnabled();
     const nextSiteId = updates.siteId !== undefined ? updates.siteId! : current.siteId;
@@ -627,18 +677,47 @@ export class DatabaseStorage implements IStorage {
       .set(setBody)
       .where(eq(inventoryItems.id, id))
       .returning();
-    if (updated) {
-      this.enqueueWebhookEvent("inventory.updated", updated).catch((e) => console.error("Webhook enqueue failed", e));
+    if (!updated) {
+      throw httpStatusError(404, "Item not found");
     }
+    this.enqueueWebhookEvent("inventory.updated", updated).catch((e) => console.error("Webhook enqueue failed", e));
     return updated;
   }
 
-  async deleteItem(id: number): Promise<void> {
-    const [item] = await db.select().from(inventoryItems).where(eq(inventoryItems.id, id));
-    await db.delete(inventoryItems).where(eq(inventoryItems.id, id));
-    if (item) {
-      this.enqueueWebhookEvent("inventory.deleted", item).catch((e) => console.error("Webhook enqueue failed", e));
-    }
+  async deleteInventoryItemWithUndo(params: {
+    item: InventoryItem;
+    attachments: { id: number; imageUrl: string }[];
+    userId: number | null;
+  }): Promise<{ undoToken: string; undoExpiresAt: Date }> {
+    const { item, attachments, userId } = params;
+    const id = item.id;
+    const undoToken = buildUndoToken();
+    const undoExpiresAt = new Date(Date.now() + BULK_UNDO_WINDOW_MIN * 60_000);
+    const payload = { items: [item], attachments, deletedIds: [id] };
+    const itemName = item.name ?? `Item #${id}`;
+    const remarks = buildDeleteHistoryRemarks("DELETE", itemName, undoToken);
+
+    await db.transaction(async (tx) => {
+      await tx.insert(inventoryBulkUndo).values({
+        token: undoToken,
+        actionType: "single_delete",
+        payload,
+        expiresAt: undoExpiresAt,
+        createdByUserId: userId ?? null,
+      });
+      await tx.insert(inventoryHistory).values({
+        productId: id,
+        companyId: item.companyId ?? null,
+        transactionType: "DELETE",
+        quantity: item.units ?? 0,
+        userId: userId ?? null,
+        remarks,
+      });
+      await tx.delete(inventoryItems).where(eq(inventoryItems.id, id));
+    });
+
+    this.enqueueWebhookEvent("inventory.deleted", item).catch((e) => console.error("Webhook enqueue failed", e));
+    return { undoToken, undoExpiresAt };
   }
 
   async getAttachments(itemId: number): Promise<{ id: number; imageUrl: string }[]> {
@@ -681,6 +760,10 @@ export class DatabaseStorage implements IStorage {
     return row!;
   }
 
+  async addHistoryRecordsBulk(records: InventoryHistoryInsertRow[]): Promise<void> {
+    await insertInventoryHistoryBulk(db, records);
+  }
+
   private buildHistoryConditions(
     productId?: number,
     filters?: { transactionType?: string; userId?: number; dateFrom?: string; dateTo?: string; search?: string }
@@ -692,8 +775,8 @@ export class DatabaseStorage implements IStorage {
     if (filters?.dateFrom) conditions.push(gte(inventoryHistory.createdAt, new Date(filters.dateFrom + "T00:00:00.000Z")));
     if (filters?.dateTo) conditions.push(lte(inventoryHistory.createdAt, new Date(filters.dateTo + "T23:59:59.999Z")));
     if (filters?.search?.trim()) {
-      const term = `%${filters.search.trim()}%`;
-      conditions.push(or(ilike(inventoryItems.code, term), ilike(inventoryItems.name, term))!);
+      const s = filters.search.trim();
+      conditions.push(or(columnIlikeContains(inventoryItems.code, s), columnIlikeContains(inventoryItems.name, s))!);
     }
     return conditions;
   }
@@ -883,79 +966,81 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getOpsSummary(): Promise<OpsSummaryResponse> {
+    return getCachedOpsSummary(() => this.computeOpsSummary());
+  }
+
+  private async computeOpsSummary(): Promise<OpsSummaryResponse> {
     const now = new Date();
     const last5m = new Date(now.getTime() - 5 * 60_000);
     const last1h = new Date(now.getTime() - 60 * 60_000);
     const last24h = new Date(now.getTime() - 24 * 60 * 60_000);
     const last7d = new Date(now.getTime() - 7 * 24 * 60 * 60_000);
 
-    const [alertsRows, apiRows24h, authFailures24hRows, rateHits24hRows, csrf24hRows, importRows24h, backupRows7d, restoreVerifyRows7d, integrityRows7d, lastIntegrityRunRows, historyFailRows24h] = await Promise.all([
+    const [
+      events24hGrouped,
+      slowRequestLatencyRows,
+      importRows24h,
+      counts7dGrouped,
+      lastIntegrityRunRows,
+    ] = await Promise.all([
       db
         .select({
+          eventType: opsEvents.eventType,
           severity: opsEvents.severity,
           total: count(),
         })
         .from(opsEvents)
         .where(gt(opsEvents.createdAt, last24h))
-        .groupBy(opsEvents.severity),
+        .groupBy(opsEvents.eventType, opsEvents.severity),
+
       db
         .select({
-          eventType: opsEvents.eventType,
-          total: count(),
           p95: sql<number>`percentile_cont(0.95) within group (order by (( ${opsEvents.payload} ->> 'durationMs')::numeric ))`,
         })
         .from(opsEvents)
         .where(
           and(
             gt(opsEvents.createdAt, last24h),
-            inArray(opsEvents.eventType, ["api.error_4xx", "api.error_5xx", "api.slow_request"])
-          )
-        )
-        .groupBy(opsEvents.eventType),
-      db
-        .select({ total: count() })
-        .from(opsEvents)
-        .where(and(gt(opsEvents.createdAt, last24h), eq(opsEvents.eventType, "auth.login_failure"))),
-      db
-        .select({ total: count() })
-        .from(opsEvents)
-        .where(and(gt(opsEvents.createdAt, last24h), eq(opsEvents.eventType, "auth.rate_limit_hit"))),
-      db
-        .select({ total: count() })
-        .from(opsEvents)
-        .where(and(gt(opsEvents.createdAt, last24h), eq(opsEvents.eventType, "auth.csrf_blocked"))),
-      db
-        .select({
-          eventType: opsEvents.eventType,
-          payload: opsEvents.payload,
-        })
-        .from(opsEvents)
-        .where(and(gt(opsEvents.createdAt, last24h), inArray(opsEvents.eventType, ["job.import_success", "job.import_failure"]))),
-      db
-        .select({ eventType: opsEvents.eventType, total: count() })
-        .from(opsEvents)
-        .where(and(gt(opsEvents.createdAt, last7d), inArray(opsEvents.eventType, ["job.backup_success", "job.backup_failure"])))
-        .groupBy(opsEvents.eventType),
-      db
-        .select({ eventType: opsEvents.eventType, total: count() })
-        .from(opsEvents)
-        .where(and(gt(opsEvents.createdAt, last7d), inArray(opsEvents.eventType, ["job.backup_restore_verify_success", "job.backup_restore_verify_failure"])))
-        .groupBy(opsEvents.eventType),
-      db
-        .select({ eventType: opsEvents.eventType, total: count() })
-        .from(opsEvents)
-        .where(and(gt(opsEvents.createdAt, last7d), inArray(opsEvents.eventType, ["job.integrity_scan_success", "job.integrity_scan_failure"])))
-        .groupBy(opsEvents.eventType),
+            eq(opsEvents.eventType, "api.slow_request"),
+          ),
+        ),
+
       db
         .select({ eventType: opsEvents.eventType, payload: opsEvents.payload })
         .from(opsEvents)
-        .where(inArray(opsEvents.eventType, ["job.integrity_scan_success", "job.integrity_scan_failure"]))
+        .where(
+          and(
+            gt(opsEvents.createdAt, last24h),
+            inArray(opsEvents.eventType, ["job.import_success", "job.import_failure"]),
+          ),
+        ),
+
+      db
+        .select({ eventType: opsEvents.eventType, total: count() })
+        .from(opsEvents)
+        .where(
+          and(
+            gt(opsEvents.createdAt, last7d),
+            inArray(opsEvents.eventType, [
+              "job.backup_success",
+              "job.backup_failure",
+              "job.backup_restore_verify_success",
+              "job.backup_restore_verify_failure",
+              "job.integrity_scan_success",
+              "job.integrity_scan_failure",
+            ]),
+          ),
+        )
+        .groupBy(opsEvents.eventType),
+
+      db
+        .select({ eventType: opsEvents.eventType, payload: opsEvents.payload })
+        .from(opsEvents)
+        .where(
+          inArray(opsEvents.eventType, ["job.integrity_scan_success", "job.integrity_scan_failure"]),
+        )
         .orderBy(desc(opsEvents.createdAt))
         .limit(1),
-      db
-        .select({ total: count() })
-        .from(opsEvents)
-        .where(and(gt(opsEvents.createdAt, last24h), eq(opsEvents.eventType, "job.history_write_failure"))),
     ]);
 
     let activeSessions: number | null = null;
@@ -967,53 +1052,63 @@ export class DatabaseStorage implements IStorage {
     }
 
     const alerts = { critical: 0, warning: 0, info: 0 };
-    for (const row of alertsRows) {
-      if (row.severity === "critical") alerts.critical = Number(row.total ?? 0);
-      if (row.severity === "warning") alerts.warning = Number(row.total ?? 0);
-      if (row.severity === "info") alerts.info = Number(row.total ?? 0);
+    const count24hByType = new Map<string, number>();
+    for (const row of events24hGrouped) {
+      const n = Number(row.total ?? 0);
+      count24hByType.set(row.eventType, (count24hByType.get(row.eventType) ?? 0) + n);
+      if (row.severity === "critical") alerts.critical += n;
+      else if (row.severity === "warning") alerts.warning += n;
+      else if (row.severity === "info") alerts.info += n;
     }
 
-    let total4xx = 0;
-    let total5xx = 0;
-    let p95ApiLatencyMs24h: number | null = null;
-    for (const row of apiRows24h) {
-      if (row.eventType === "api.error_4xx") total4xx = Number(row.total ?? 0);
-      if (row.eventType === "api.error_5xx") total5xx = Number(row.total ?? 0);
-      if (row.eventType === "api.slow_request" && row.p95 != null && Number.isFinite(Number(row.p95))) {
-        p95ApiLatencyMs24h = Number(row.p95);
-      }
-    }
+    const total4xx = count24hByType.get("api.error_4xx") ?? 0;
+    const total5xx = count24hByType.get("api.error_5xx") ?? 0;
     const totalApiErrors24h = total4xx + total5xx;
     const api5xxRate24h = totalApiErrors24h > 0 ? total5xx / totalApiErrors24h : 0;
     const apiSuccessRate24h = Math.max(0, 1 - api5xxRate24h);
 
-    const authFailures24h = Number(authFailures24hRows?.[0]?.total ?? 0);
-    const authFailureRatePerHour = authFailures24h / 24;
-    const rateLimitHits24h = Number(rateHits24hRows?.[0]?.total ?? 0);
-    const csrfBlocks24h = Number(csrf24hRows?.[0]?.total ?? 0);
+    const p95Raw = slowRequestLatencyRows?.[0]?.p95;
+    const p95ApiLatencyMs24h =
+      p95Raw != null && Number.isFinite(Number(p95Raw)) ? Number(p95Raw) : null;
 
-    const backupSuccess7d = Number(backupRows7d.find((r) => r.eventType === "job.backup_success")?.total ?? 0);
-    const backupFailure7d = Number(backupRows7d.find((r) => r.eventType === "job.backup_failure")?.total ?? 0);
+    const authFailures24h = count24hByType.get("auth.login_failure") ?? 0;
+    const authFailureRatePerHour = authFailures24h / 24;
+    const rateLimitHits24h = count24hByType.get("auth.rate_limit_hit") ?? 0;
+    const csrfBlocks24h = count24hByType.get("auth.csrf_blocked") ?? 0;
+    const historyWriteFailures24h = count24hByType.get("job.history_write_failure") ?? 0;
+    const historyWritesApprox24h = Math.max(1, historyWriteFailures24h);
+    const historyWriteSuccessRate24h = Math.max(
+      0,
+      (historyWritesApprox24h - historyWriteFailures24h) / historyWritesApprox24h,
+    );
+
+    const by7d = new Map<string, number>();
+    for (const row of counts7dGrouped) {
+      by7d.set(row.eventType, Number(row.total ?? 0));
+    }
+    const backupSuccess7d = by7d.get("job.backup_success") ?? 0;
+    const backupFailure7d = by7d.get("job.backup_failure") ?? 0;
     const backupTotal7d = backupSuccess7d + backupFailure7d;
     const backupSuccessRate7d = backupTotal7d > 0 ? backupSuccess7d / backupTotal7d : null;
-    const restoreVerificationPassCount7d = Number(restoreVerifyRows7d.find((r) => r.eventType === "job.backup_restore_verify_success")?.total ?? 0);
-    const restoreVerificationFailCount7d = Number(restoreVerifyRows7d.find((r) => r.eventType === "job.backup_restore_verify_failure")?.total ?? 0);
+    const restoreVerificationPassCount7d = by7d.get("job.backup_restore_verify_success") ?? 0;
+    const restoreVerificationFailCount7d = by7d.get("job.backup_restore_verify_failure") ?? 0;
     const restoreVerificationTotal7d = restoreVerificationPassCount7d + restoreVerificationFailCount7d;
-    const restoreVerificationSuccessRate7d = restoreVerificationTotal7d > 0
-      ? restoreVerificationPassCount7d / restoreVerificationTotal7d
-      : null;
-    const integritySuccess7d = Number(integrityRows7d.find((r) => r.eventType === "job.integrity_scan_success")?.total ?? 0);
-    const integrityFailure7d = Number(integrityRows7d.find((r) => r.eventType === "job.integrity_scan_failure")?.total ?? 0);
+    const restoreVerificationSuccessRate7d =
+      restoreVerificationTotal7d > 0
+        ? restoreVerificationPassCount7d / restoreVerificationTotal7d
+        : null;
+    const integritySuccess7d = by7d.get("job.integrity_scan_success") ?? 0;
+    const integrityFailure7d = by7d.get("job.integrity_scan_failure") ?? 0;
     const integrityTotal7d = integritySuccess7d + integrityFailure7d;
     const integrityScanSuccessRate7d = integrityTotal7d > 0 ? integritySuccess7d / integrityTotal7d : null;
-    const lastIntegrityPayload = (lastIntegrityRunRows?.[0]?.payload ?? {}) as Record<string, unknown>;
-    const integrityScanIssuesLastRun = lastIntegrityRunRows.length > 0
-      ? Number.isFinite(Number(lastIntegrityPayload.totalIssues)) ? Number(lastIntegrityPayload.totalIssues) : null
-      : null;
 
-    const historyWriteFailures24h = Number(historyFailRows24h?.[0]?.total ?? 0);
-    const historyWritesApprox24h = Math.max(1, historyWriteFailures24h);
-    const historyWriteSuccessRate24h = Math.max(0, (historyWritesApprox24h - historyWriteFailures24h) / historyWritesApprox24h);
+    const lastIntegrityPayload = (lastIntegrityRunRows?.[0]?.payload ?? {}) as Record<string, unknown>;
+    const integrityScanIssuesLastRun =
+      lastIntegrityRunRows.length > 0
+        ? Number.isFinite(Number(lastIntegrityPayload.totalIssues))
+          ? Number(lastIntegrityPayload.totalIssues)
+          : null
+        : null;
 
     const importSuccesses = importRows24h.filter((r) => r.eventType === "job.import_success");
     const importFailures = importRows24h.filter((r) => r.eventType === "job.import_failure").length;
@@ -1203,10 +1298,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertUserSiteRole(userId: number, siteId: number, templateId: number): Promise<void> {
-    await db
-      .delete(userSiteRoles)
-      .where(and(eq(userSiteRoles.userId, userId), eq(userSiteRoles.siteId, siteId)));
-    await db.insert(userSiteRoles).values({ userId, siteId, templateId });
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(userSiteRoles)
+        .where(and(eq(userSiteRoles.userId, userId), eq(userSiteRoles.siteId, siteId)));
+      await tx.insert(userSiteRoles).values({ userId, siteId, templateId });
+    });
   }
 
   async deleteUserSiteRole(userId: number, siteId: number): Promise<boolean> {

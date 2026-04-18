@@ -116,7 +116,7 @@ async function startTestServer(roleMode: RoleMode): Promise<{ baseUrl: string; h
   const { registerRoutes } = await import("../routes");
   await registerRoutes(httpServer, app);
 
-  ensureThumbsDir();
+  await ensureThumbsDir();
 
   await new Promise<void>((resolve) => {
     httpServer.listen(0, "127.0.0.1", () => resolve());

@@ -6,6 +6,30 @@ Updated when decisions are made.
 
 ---
 
+## 2026-04-17 — `getOpsSummary` query merge + 30s TTL cache
+
+**Context:** The Ops dashboard summary method ran **11** parallel **`ops_events`** queries in one **`Promise.all`**, plus a **`user_sessions`** count — up to **12** pool connections per request. Under concurrent polls this risked pool exhaustion.
+
+**Decision:** Merge all **`ops_events`** 24h counts into one **`GROUP BY (event_type, severity)`**; merge the three 7d backup / restore-verify / integrity counts into one **`GROUP BY event_type`**; keep **`percentile_cont(0.95)`** on **`api.slow_request`**, the import payload scan, the last-integrity **`ORDER BY`** + **`LIMIT 1`**, and the **`user_sessions`** probe as separate queries. Wrap **`DatabaseStorage.getOpsSummary`** in a **30s** in-memory TTL cache (**`server/ops-summary-cache.ts`**, **`getCachedOpsSummary`**, **`clearOpsSummaryCache`**).
+
+**Tradeoffs:** The aggregate summary can lag up to **30s** behind live **`ops_events`**. Acceptable for a polled KPI pane; the event stream remains uncached for alert-style use.
+
+**Invariants:** **`OpsSummaryResponse`** shape unchanged (fixture parity test). **`activeSessions`** still tolerates missing **`user_sessions`**. Failed cache loads do not poison the entry; tests call **`clearOpsSummaryCache`**.
+
+---
+
+## 2026-04-17 — Bulk update / archive history is transactional
+
+**Context:** **`POST /api/inventory/bulk/update`** and **`/bulk/archive`** logged **`inventory_history`** via **`storage.addHistoryRecord`** with **`.catch(console.error)`** (update) or **`.catch(() => undefined)`** (archive), after per-row updates and without tying success to the HTTP response body. A failed insert could leave inventory mutated with no audit row.
+
+**Decision:** Perform snapshot + batched **`UPDATE`** + multi-row **`INSERT INTO inventory_history`** inside **`db.transaction`**. Any failure rolls back both the inventory change and the history batch.
+
+**Alternatives considered:** Keep fire-and-forget history for throughput; queue history to a worker.
+
+**Why not the others:** Audit integrity is a product invariant; silent **`catch`** on history is unacceptable for bulk paths once batching is implemented.
+
+---
+
 ## 2026-04-09 — Webhook signing secret omitted from admin REST JSON
 
 **Context:** `GET` / `POST` / `PATCH /api/webhooks` returned full `webhook_endpoints` rows, including the HMAC signing secret, increasing exposure via browser tooling, proxies, or logs even for trusted admins.

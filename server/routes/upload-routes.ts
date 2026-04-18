@@ -1,13 +1,13 @@
 import type { Express } from "express";
 import path from "path";
-import fs from "fs";
+import fsPromises from "fs/promises";
 import { eq } from "drizzle-orm";
 import { inventoryItems } from "@shared/schema";
 import { SITE_CAPABILITIES } from "@shared/site-rbac";
 import { db } from "../db";
 import { emitOpsEvent } from "../ops-events";
 import { resolveSafeFilePath } from "../path-utils";
-import { getClientIp, requireAuth, requireRole } from "../route-middleware";
+import { getAuthUserId, getClientIp, requireAuth, requireRole } from "../route-middleware";
 import { getSiteAccess, can, forbidSiteRbac, itemSiteAllowed } from "../site-rbac-access";
 import { storage } from "../storage";
 import { ensureThumbnail, thumbsPath } from "../thumbnails";
@@ -24,27 +24,43 @@ import {
   normalizeHeicToJpeg,
 } from "../upload-config";
 
+async function statIsRegularFile(filePath: string): Promise<boolean> {
+  try {
+    const st = await fsPromises.stat(filePath);
+    return st.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function unlinkUploadQuiet(filePath: string): Promise<void> {
+  try {
+    await fsPromises.unlink(filePath);
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== "ENOENT") {
+      console.error("Failed to remove temp upload", filePath, err);
+    }
+  }
+}
+
 export function registerUploadRoutes(app: Express): void {
   // Private upload serving (A1 + 2B)
   // - Images: any authenticated user (viewer can see inventory)
   // - Documents: editor/admin only
   // - Thumbnails: require auth; generate from existing images on-demand
-  app.get("/uploads/documents/:filename", requireAuth, requireRole("editor", "admin"), (req, res) => {
+  app.get("/uploads/documents/:filename", requireAuth, requireRole("editor", "admin"), async (req, res) => {
     const requestedFilename = Array.isArray(req.params.filename) ? req.params.filename[0] : req.params.filename;
     const filePath = resolveSafeFilePath(documentsPath, requestedFilename);
-    if (!filePath || !fs.existsSync(filePath)) return res.status(404).json({ message: "File not found" });
-    const stat = fs.statSync(filePath);
-    if (!stat.isFile()) return res.status(404).json({ message: "File not found" });
+    if (!filePath || !(await statIsRegularFile(filePath))) return res.status(404).json({ message: "File not found" });
     res.setHeader("Cache-Control", "private, max-age=86400");
     return res.sendFile(filePath);
   });
 
-  app.get("/uploads/:filename", requireAuth, (req, res) => {
+  app.get("/uploads/:filename", requireAuth, async (req, res) => {
     const requestedFilename = Array.isArray(req.params.filename) ? req.params.filename[0] : req.params.filename;
     const filePath = resolveSafeFilePath(uploadsPath, requestedFilename);
-    if (!filePath || !fs.existsSync(filePath)) return res.status(404).json({ message: "File not found" });
-    const stat = fs.statSync(filePath);
-    if (!stat.isFile()) return res.status(404).json({ message: "File not found" });
+    if (!filePath || !(await statIsRegularFile(filePath))) return res.status(404).json({ message: "File not found" });
     res.setHeader("Cache-Control", "private, max-age=86400");
     return res.sendFile(filePath);
   });
@@ -74,16 +90,16 @@ export function registerUploadRoutes(app: Express): void {
           endpoint: req.path,
           method: req.method,
           ip,
-          userId: Number.isFinite((req as { user?: { id?: number } }).user?.id)
-            ? (req as { user: { id: number } }).user.id
-            : null,
+          userId: getAuthUserId(req),
           payload: { category: "thumbnail", maxRequests: THUMB_RATE_LIMIT_MAX_REQUESTS },
         });
         return res.status(429).json({ message: "Too many thumbnail requests" });
       }
     }
 
-    if (!fs.existsSync(thumbFilePath)) {
+    let thumbExists = await statIsRegularFile(thumbFilePath);
+
+    if (!thumbExists) {
       // Derive original filename: same base name, any image extension
       const base = path.basename(safeFilename, ".webp");
       const uploadsDir = path.join(process.cwd(), "uploads");
@@ -92,12 +108,9 @@ export function registerUploadRoutes(app: Express): void {
       let originalPath: string | null = null;
       for (const ext of exts) {
         const candidate = path.join(uploadsDir, base + ext);
-        if (fs.existsSync(candidate)) {
-          const candidateStat = fs.statSync(candidate);
-          if (candidateStat.isFile()) {
-            originalPath = candidate;
-            break;
-          }
+        if (await statIsRegularFile(candidate)) {
+          originalPath = candidate;
+          break;
         }
       }
 
@@ -105,7 +118,7 @@ export function registerUploadRoutes(app: Express): void {
 
       // Extra safety: avoid generating thumbnails from unexpectedly large files.
       // (Upload routes already cap image size, but this protects against manual filesystem tampering.)
-      const originalStat = fs.statSync(originalPath);
+      const originalStat = await fsPromises.stat(originalPath);
       if (originalStat.size > MAX_ORIGINAL_BYTES_FOR_THUMB) {
         return res.status(413).json({ message: "Original image too large for thumbnail generation" });
       }
@@ -128,18 +141,18 @@ export function registerUploadRoutes(app: Express): void {
           endpoint: req.path,
           method: req.method,
           ip,
-          userId: Number.isFinite((req as { user?: { id?: number } }).user?.id)
-            ? (req as { user: { id: number } }).user.id
-            : null,
+          userId: getAuthUserId(req),
           payload: { filename: safeFilename, error: err instanceof Error ? err.message : String(err) },
         });
         return res.status(500).json({ message: "Thumbnail generation failed" });
       } finally {
         thumbGenerationInFlight.delete(thumbFilePath);
       }
+
+      thumbExists = await statIsRegularFile(thumbFilePath);
     }
 
-    if (!fs.existsSync(thumbFilePath)) return res.status(404).json({ message: "Thumbnail not found" });
+    if (!thumbExists) return res.status(404).json({ message: "Thumbnail not found" });
     res.setHeader("Content-Type", "image/webp");
     res.setHeader("Cache-Control", "private, max-age=86400");
     return res.sendFile(thumbFilePath);
@@ -153,17 +166,17 @@ export function registerUploadRoutes(app: Express): void {
     const id = Number(req.params.id);
     const access = await getSiteAccess(req);
     if (!can(access, SITE_CAPABILITIES.INVENTORY_WRITE)) {
-      fs.unlink(req.file.path, () => {});
+      await unlinkUploadQuiet(req.file.path);
       forbidSiteRbac(req, res, { reason: "missing_capability", capability: SITE_CAPABILITIES.INVENTORY_WRITE });
       return;
     }
     const item = await storage.getItem(id);
     if (!item) {
-      fs.unlink(req.file.path, () => {});
+      await unlinkUploadQuiet(req.file.path);
       return res.status(404).json({ message: "Item not found" });
     }
     if (!itemSiteAllowed(access, item.siteId)) {
-      fs.unlink(req.file.path, () => {});
+      await unlinkUploadQuiet(req.file.path);
       forbidSiteRbac(req, res, { reason: "item_site", siteId: item.siteId });
       return;
     }

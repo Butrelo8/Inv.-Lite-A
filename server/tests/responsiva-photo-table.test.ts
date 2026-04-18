@@ -68,9 +68,9 @@ test("each image uses cxEmu and cyEmu from the entry with center alignment", () 
   assert.match(xml, /<w:jc w:val="center"\/>/);
 });
 
-test("blipFill does not use a:stretch (avoid forced distortion)", () => {
+test("blipFill uses stretch + fillRect so images fill the inline extent", () => {
   const xml = buildPhotoTableXml([pe("rId100", 1000)]);
-  assert.doesNotMatch(xml, /<a:stretch>/);
+  assert.match(xml, /<a:stretch><a:fillRect\/><\/a:stretch>/);
 });
 
 test("computeImageExtentEmu preserves aspect ratio inside max EMU box", () => {

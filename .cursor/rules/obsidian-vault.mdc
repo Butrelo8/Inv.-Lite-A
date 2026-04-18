@@ -2,8 +2,9 @@
 alwaysApply: false
 ---
 ## OBSIDIAN VAULT — LOCATION
-- **Vault root**: `C:\Users\black\iCloudDrive\iCloud~md~obsidian\Mybrain🫩` (Windows). Use `C:/Users/black/iCloudDrive/iCloud~md~obsidian/Mybrain🫩` in tools when forward slashes work.
-- The vault is often **outside** the git repo. For reliable read/write/search, **add `C:\Users\black\iCloudDrive\iCloud~md~obsidian\Mybrain🫩` to the Cursor workspace** (File → Add Folder to Workspace) when working on notes; otherwise tools may not see files.
+- **Vault root (macOS, Obsidian iCloud sync):** `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Mybrain🫩` — use forward slashes in tool paths; space in `Mobile Documents` is literal.
+- **Windows:** path depends on where Obsidian/iCloud placed the vault (often under the user’s iCloud Drive folder). Use the folder Obsidian shows as vault root, or add that folder to the workspace — do not assume `CloudStorage\...` unless verified on that machine.
+- The vault is often **outside** the git repo. For reliable read/write/search, **add the vault folder to the Cursor workspace** (File → Add Folder to Workspace) when working on notes; otherwise tools may not see files.
 
 ## NAMING
 - **Index notes**: aggregate topics (e.g. `Skills Index.md`, `RAG Index.md`).
@@ -16,9 +17,9 @@ alwaysApply: false
 - Index notes: lists of `[[wikilinks]]`.
 
 ## SEARCH (prefer Cursor tools)
-- **Glob** under vault root: `**/*.md` with path scoped to `C:/Users/black/iCloudDrive/iCloud~md~obsidian/Mybrain🫩` when the folder is in the workspace.
+- **Glob** under vault root: `**/*.md` with path scoped to the resolved vault root (macOS: `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Mybrain🫩`) when the folder is in the workspace or tools can read it.
 - **Grep** content: pattern + `*.md` under the same root.
-- On Windows without workspace folder: try absolute path in tool args if supported; if not, ask user to add the folder to the workspace.
+- If tools cannot see the vault: ask user to add vault folder to workspace, or pass absolute path when the environment allows it.
 
 ## CREATE NOTE
 1. **Title Case** filename + `.md`.
@@ -27,7 +28,7 @@ alwaysApply: false
 4. If part of a numbered sequence, follow the user's existing numbering scheme in the vault.
 
 ## BACKLINKS
-- Grep for `[[Exact Note Title]]` across `C:/Users/black/iCloudDrive/iCloud~md~obsidian/Mybrain🫩/**/*.md` to find backlinks.
+- Grep for `[[Exact Note Title]]` across `**/*.md` under vault root (macOS path above) to find backlinks.
 
 ## FIND INDEX NOTES
 - Glob: `**/*Index*.md` under vault root.

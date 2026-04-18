@@ -73,7 +73,7 @@ test("uploads access boundary: viewer/editor/admin (images, documents, thumbs)",
 
   ensureDir(uploadsDir);
   ensureDir(docsDir);
-  ensureThumbsDir();
+  await ensureThumbsDir();
 
   const id = `test-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const imageFile = `inv-${id}.jpg`;

@@ -27,7 +27,7 @@ import {
 } from "../inventory-export-config";
 import { emitOpsEvent } from "../ops-events";
 import { parseSiteIdQuery, requireInventoryListContext } from "../inventory-list-context";
-import { getClientIp, requireAuth, requireRole } from "../route-middleware";
+import { getAuthUserId, getClientIp, requireAuth, requireRole } from "../route-middleware";
 import { getSiteAccess, can, forbidSiteRbac, itemSiteAllowed } from "../site-rbac-access";
 import { storage } from "../storage";
 import { csvUpload } from "../upload-config";
@@ -424,6 +424,7 @@ export function registerInventoryExportRoutes(app: Express): void {
       forbidSiteRbac(req, res, { reason: "missing_capability", capability: SITE_CAPABILITIES.INVENTORY_WRITE });
       return;
     }
+    const importUserId = getAuthUserId(req);
     try {
       let content = req.file.buffer.toString("utf-8");
       content = content.replace(/^\uFEFF/, ""); // Remove BOM
@@ -508,18 +509,17 @@ export function registerInventoryExportRoutes(app: Express): void {
           }
           const item = await storage.createItem(parsedRow.data);
           created.push(item.id);
-          const userId = (req as any).user?.id;
           storage
-            .addHistoryRecord({ productId: item.id, companyId: item.companyId ?? null, transactionType: "IMPORT", quantity: item.units, userId, remarks: item.name })
+            .addHistoryRecord({ productId: item.id, companyId: item.companyId ?? null, transactionType: "IMPORT", quantity: item.units, userId: importUserId, remarks: item.name })
             .catch((err) => {
-              console.error("History log failed (IMPORT)", { productId: item.id, userId }, err);
+              console.error("History log failed (IMPORT)", { productId: item.id, userId: importUserId }, err);
               void emitOpsEvent({
                 eventType: "job.history_write_failure",
                 severity: "critical",
                 endpoint: req.path,
                 method: req.method,
                 ip: getClientIp(req),
-                userId: Number.isFinite(userId) ? userId : null,
+                userId: importUserId,
                 payload: { action: "IMPORT", productId: item.id, error: err instanceof Error ? err.message : String(err) },
               });
             });
@@ -536,7 +536,7 @@ export function registerInventoryExportRoutes(app: Express): void {
         endpoint: req.path,
         method: req.method,
         ip: getClientIp(req),
-        userId: Number.isFinite((req as any).user?.id) ? (req as any).user.id : null,
+        userId: importUserId,
         payload: { rowCount: created.length, errorCount: errors.length },
       });
       res.json({
@@ -551,7 +551,7 @@ export function registerInventoryExportRoutes(app: Express): void {
         endpoint: req.path,
         method: req.method,
         ip: getClientIp(req),
-        userId: Number.isFinite((req as any).user?.id) ? (req as any).user.id : null,
+        userId: importUserId,
         payload: { error: err instanceof Error ? err.message : String(err) },
       });
       res.status(400).json({ message: err instanceof Error ? err.message : "Import failed" });

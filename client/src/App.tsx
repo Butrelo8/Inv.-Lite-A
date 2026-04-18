@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Switch, Route, useLocation, Redirect } from "wouter";
 import { ThemeProvider } from "next-themes";
 import { queryClient } from "./lib/queryClient";
@@ -5,31 +6,36 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
-import Overview from "@/pages/Overview";
-import Dashboard from "@/pages/Dashboard";
-import History from "@/pages/History";
-import Employees from "@/pages/Employees";
-import Compliance from "@/pages/Compliance";
-import ExecutiveSummary from "@/pages/ExecutiveSummary";
-import Companies from "@/pages/Companies";
-import SharedNotes from "@/pages/SharedNotes";
-import Users from "@/pages/Users";
-import OpsHealth from "@/pages/OpsHealth";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
+
+const Overview = lazy(() => import("@/pages/Overview"));
+const Dashboard = lazy(() => import("@/pages/Dashboard"));
+const History = lazy(() => import("@/pages/History"));
+const Employees = lazy(() => import("@/pages/Employees"));
+const Compliance = lazy(() => import("@/pages/Compliance"));
+const ExecutiveSummary = lazy(() => import("@/pages/ExecutiveSummary"));
+const Companies = lazy(() => import("@/pages/Companies"));
+const SharedNotes = lazy(() => import("@/pages/SharedNotes"));
+const Users = lazy(() => import("@/pages/Users"));
+const OpsHealth = lazy(() => import("@/pages/OpsHealth"));
+
+function AppLoadingShell() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
 
 function Router() {
   const { user, isLoading } = useAuth();
   const [location] = useLocation();
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <AppLoadingShell />;
   }
 
   if (location === "/login") {
@@ -42,82 +48,84 @@ function Router() {
   }
 
   return (
-    <Switch>
-      <Route path="/">
-        <AppLayout>
-          <Overview />
-        </AppLayout>
-      </Route>
-      <Route path="/inventory">
-        <AppLayout>
-          <Dashboard />
-        </AppLayout>
-      </Route>
-      <Route path="/shared-notes">
-        <AppLayout>
-          <SharedNotes />
-        </AppLayout>
-      </Route>
-      <Route path="/employees">
-        {((user?.role ?? "viewer") === "viewer") ? (
-          <Redirect to="/" />
-        ) : (
+    <Suspense fallback={<AppLoadingShell />}>
+      <Switch>
+        <Route path="/">
           <AppLayout>
-            <Employees />
+            <Overview />
           </AppLayout>
-        )}
-      </Route>
-      <Route path="/compliance">
-        <AppLayout>
-          <Compliance />
-        </AppLayout>
-      </Route>
-      <Route path="/reports/executive-summary">
-        <AppLayout>
-          <ExecutiveSummary />
-        </AppLayout>
-      </Route>
-      <Route path="/companies">
-        {((user?.role ?? "viewer") === "viewer") ? (
-          <Redirect to="/" />
-        ) : (
+        </Route>
+        <Route path="/inventory">
           <AppLayout>
-            <Companies />
+            <Dashboard />
           </AppLayout>
-        )}
-      </Route>
-      <Route path="/users">
-        {(user?.role ?? "") !== "admin" ? (
-          <Redirect to="/" />
-        ) : (
+        </Route>
+        <Route path="/shared-notes">
           <AppLayout>
-            <Users />
+            <SharedNotes />
           </AppLayout>
-        )}
-      </Route>
-      <Route path="/activity">
-        <Redirect to="/history" />
-      </Route>
-      <Route path="/history">
-        {((user?.role ?? "viewer") === "viewer") ? (
-          <Redirect to="/" />
-        ) : (
+        </Route>
+        <Route path="/employees">
+          {((user?.role ?? "viewer") === "viewer") ? (
+            <Redirect to="/" />
+          ) : (
+            <AppLayout>
+              <Employees />
+            </AppLayout>
+          )}
+        </Route>
+        <Route path="/compliance">
           <AppLayout>
-            <History />
+            <Compliance />
           </AppLayout>
-        )}
-      </Route>
-      <Route path="/ops-health">
-        {((user?.role ?? "viewer") === "viewer") ? (
-          <Redirect to="/" />
-        ) : (
+        </Route>
+        <Route path="/reports/executive-summary">
           <AppLayout>
-            <OpsHealth />
+            <ExecutiveSummary />
           </AppLayout>
-        )}
-      </Route>
-      <Route component={NotFound} />
-    </Switch>
+        </Route>
+        <Route path="/companies">
+          {((user?.role ?? "viewer") === "viewer") ? (
+            <Redirect to="/" />
+          ) : (
+            <AppLayout>
+              <Companies />
+            </AppLayout>
+          )}
+        </Route>
+        <Route path="/users">
+          {(user?.role ?? "") !== "admin" ? (
+            <Redirect to="/" />
+          ) : (
+            <AppLayout>
+              <Users />
+            </AppLayout>
+          )}
+        </Route>
+        <Route path="/activity">
+          <Redirect to="/history" />
+        </Route>
+        <Route path="/history">
+          {((user?.role ?? "viewer") === "viewer") ? (
+            <Redirect to="/" />
+          ) : (
+            <AppLayout>
+              <History />
+            </AppLayout>
+          )}
+        </Route>
+        <Route path="/ops-health">
+          {((user?.role ?? "viewer") === "viewer") ? (
+            <Redirect to="/" />
+          ) : (
+            <AppLayout>
+              <OpsHealth />
+            </AppLayout>
+          )}
+        </Route>
+        <Route component={NotFound} />
+      </Switch>
+    </Suspense>
   );
 }
 

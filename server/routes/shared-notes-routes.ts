@@ -5,7 +5,7 @@ import { SITE_CAPABILITIES } from "@shared/site-rbac";
 import { db } from "../db";
 import { storage } from "../storage";
 import { getSiteAccess, can, forbidSiteRbac, itemSiteAllowed } from "../site-rbac-access";
-import { requireAuth, requireRole } from "../route-middleware";
+import { requireAuth, requireAuthUser, requireRole } from "../route-middleware";
 
 const MAX_SHARED_NOTE_TITLE_LEN = 100;
 const MAX_SHARED_NOTE_CONTENT_LEN = 2000;
@@ -48,8 +48,9 @@ export function registerSharedNotesRoutes(app: Express): void {
     }
     if (!Number.isFinite(itemId)) return res.status(400).json({ message: "itemId is required" });
 
-    const userId = (req.user as { id?: number } | undefined)?.id;
-    if (!Number.isFinite(userId)) return res.status(401).json({ message: "Not authenticated" });
+    const user = requireAuthUser(req, res);
+    if (!user) return;
+    const userId = user.id;
 
     const access = await getSiteAccess(req);
     if (!can(access, SITE_CAPABILITIES.INVENTORY_WRITE)) {
@@ -63,7 +64,7 @@ export function registerSharedNotesRoutes(app: Express): void {
       return;
     }
 
-    const created = await storage.createSharedNote({ title, content, authorId: userId!, itemId });
+    const created = await storage.createSharedNote({ title, content, authorId: userId, itemId });
     res.status(201).json(created);
   });
 
