@@ -89,3 +89,46 @@ export const INVENTORY_EXPORT_PDF_MAX_LEN_ADMIN: Record<string, number> = {
 export const INVENTORY_EXPORT_PDF_COL_WIDTHS_VIEWER = [50, 160, 55, 36, 30, 44, 50, 58, 62, 44, 36] as const;
 export const INVENTORY_EXPORT_PDF_COL_WIDTHS_ADMIN = [...INVENTORY_EXPORT_PDF_COL_WIDTHS_VIEWER, 80] as const;
 
+export const INVENTORY_EXPORT_PDF_HEADERS_CHECKLIST = [
+  "#",
+  "Código",
+  "Nombre",
+  "Serial",
+  "Categoría",
+  "Cant.",
+  "Condición",
+  "Cond. Regreso",
+  "Firma",
+  "Notas",
+] as const;
+
+export const INVENTORY_EXPORT_PDF_KEY_MAP_CHECKLIST: Record<string, string> = {
+  "#": "_rowIndex",
+  "Código": "code",
+  "Nombre": "name",
+  "Serial": "serialNumber",
+  "Categoría": "category",
+  "Cant.": "units",
+  "Condición": "condition",
+  "Cond. Regreso": "",
+  "Firma": "",
+  "Notas": "",
+};
+
+export const INVENTORY_EXPORT_PDF_MAX_LEN_CHECKLIST: Record<string, number> = {
+  "#": 4,
+  "Código": 15,
+  "Nombre": 70,
+  "Serial": 25,
+  "Categoría": 25,
+  "Cant.": 5,
+  "Condición": 15,
+};
+
+export const INVENTORY_EXPORT_PDF_COL_WIDTHS_CHECKLIST = [20, 50, 150, 60, 65, 28, 50, 55, 75, 60] as const;
+
+export const INVENTORY_EXPORT_PDF_BLANK_COLS_CHECKLIST: ReadonlySet<string> = new Set([
+  "Cond. Regreso",
+  "Firma",
+  "Notas",
+]);

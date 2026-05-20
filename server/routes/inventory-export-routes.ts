@@ -24,6 +24,11 @@ import {
   INVENTORY_EXPORT_PDF_KEY_MAP_VIEWER,
   INVENTORY_EXPORT_PDF_MAX_LEN_ADMIN,
   INVENTORY_EXPORT_PDF_MAX_LEN_VIEWER,
+  INVENTORY_EXPORT_PDF_HEADERS_CHECKLIST,
+  INVENTORY_EXPORT_PDF_KEY_MAP_CHECKLIST,
+  INVENTORY_EXPORT_PDF_MAX_LEN_CHECKLIST,
+  INVENTORY_EXPORT_PDF_COL_WIDTHS_CHECKLIST,
+  INVENTORY_EXPORT_PDF_BLANK_COLS_CHECKLIST,
 } from "../inventory-export-config";
 import { emitOpsEvent } from "../ops-events";
 import { parseSiteIdQuery, requireInventoryListContext } from "../inventory-list-context";
@@ -187,24 +192,41 @@ export function registerInventoryExportRoutes(app: Express): void {
           modifiedAfter,
           ctx.restrictToSiteIds,
         );
+    const [companies, sites] = await Promise.all([storage.getCompanies(), storage.getSites()]);
+    const companyNameMap = new Map(companies.map((c) => [c.id, c.name]));
+    const siteNameMap = new Map(sites.map((s) => [s.id, s.name]));
     const headers = INVENTORY_EXPORT_PDF_HEADERS_VIEWER as unknown as string[];
     const keyMap = INVENTORY_EXPORT_PDF_KEY_MAP_VIEWER;
     const maxLen = INVENTORY_EXPORT_PDF_MAX_LEN_VIEWER;
-    const getVal = (item: Record<string, unknown>, h: string) =>
-      String(item[keyMap[h]] ?? "").slice(0, maxLen[h] ?? 35);
+    const getVal = (item: Record<string, unknown>, h: string) => {
+      const key = keyMap[h];
+      const raw = item[key];
+      if (key === "companyId" && typeof raw === "number") return (companyNameMap.get(raw) ?? String(raw)).slice(0, maxLen[h] ?? 35);
+      if (key === "siteId" && typeof raw === "number") return (siteNameMap.get(raw) ?? String(raw)).slice(0, maxLen[h] ?? 35);
+      return String(raw ?? "").slice(0, maxLen[h] ?? 35);
+    };
     const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 30 });
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", 'attachment; filename="inventory-export.pdf"');
     doc.pipe(res);
     const logoPath = [path.join(process.cwd(), "public", "logo.jpg"), path.join(process.cwd(), "client", "public", "logo.jpg"), path.join(process.cwd(), "logo.jpg")].find((p) => fs.existsSync(p));
+    const pageW = 842;
+    const startX = 30;
     if (logoPath) {
-      const logoWidth = 140;
-      const logoX = (842 - logoWidth) / 2;
-      doc.image(logoPath, logoX, 25, { width: logoWidth });
-      doc.y = 25 + 60 + 15;
+      const logoHeight = 55;
+      const logoWidth = logoHeight * (3 / 2);
+      const logoX = (pageW - logoWidth) / 2;
+      doc.image(logoPath, logoX, 20, { height: logoHeight });
+      doc.fontSize(14).font("Helvetica-Bold").fillColor("#1a1a2e")
+        .text("Reporte de Inventario", startX, 20, { width: pageW - startX * 2, align: "center" });
+      const dateStr = new Date().toLocaleDateString("es-MX", { year: "numeric", month: "long", day: "numeric" });
+      doc.fontSize(8).font("Helvetica").fillColor("#555555")
+        .text(dateStr, startX, 42, { width: pageW - startX * 2, align: "center" });
+      doc.moveTo(startX, 82).lineTo(pageW - startX, 82).strokeColor("#cccccc").lineWidth(0.5).stroke();
+      doc.fillColor("#000000").lineWidth(1);
+      doc.y = 90;
     }
     const colWidths = INVENTORY_EXPORT_PDF_COL_WIDTHS_VIEWER as unknown as number[];
-    const startX = 30;
     let y = doc.y;
     doc.fontSize(7).font("Helvetica-Bold");
     headers.forEach((h, i) => {
@@ -238,6 +260,95 @@ export function registerInventoryExportRoutes(app: Express): void {
       doc.moveTo(startX, y + rowHeight + 4).lineTo(startX + totalWidth, y + rowHeight + 4).stroke();
       y += rowHeight + 4;
     }
+    doc.end();
+  });
+
+  app.get("/api/inventory/export/checklist", requireAuth, async (req, res) => {
+    const eventName = String(req.query.eventName ?? "").trim();
+    if (!eventName) return res.status(400).json({ message: "Nombre del evento requerido" });
+    const dateRange = String(req.query.dateRange ?? "").trim();
+    const ids = parseExportIds(req.query);
+    const search = req.query.search as string | undefined;
+    const category = req.query.category as string | undefined;
+    const responsible = req.query.responsible as string | undefined;
+    const companyId = req.query.companyId ? parseInt(String(req.query.companyId), 10) : undefined;
+    const dateFrom = req.query.dateFrom as string | undefined;
+    const dateTo = req.query.dateTo as string | undefined;
+    const addedAfter = req.query.addedAfter as string | undefined;
+    const modifiedAfter = req.query.modifiedAfter as string | undefined;
+    const ctx = await requireInventoryListContext(req, res, parseSiteIdQuery(req));
+    if (!ctx) return;
+    const items = ids
+      ? await storage.getItemsByIds(ids, ctx.restrictToSiteIds)
+      : await storage.getItems(search, category, responsible, companyId, ctx.siteId, dateFrom, dateTo, addedAfter, modifiedAfter, ctx.restrictToSiteIds);
+
+    const headers = INVENTORY_EXPORT_PDF_HEADERS_CHECKLIST as unknown as string[];
+    const keyMap = INVENTORY_EXPORT_PDF_KEY_MAP_CHECKLIST;
+    const maxLen = INVENTORY_EXPORT_PDF_MAX_LEN_CHECKLIST;
+    const colWidths = INVENTORY_EXPORT_PDF_COL_WIDTHS_CHECKLIST as unknown as number[];
+
+    const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 30 });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", 'attachment; filename="lista-salida-equipo.pdf"');
+    doc.pipe(res);
+
+    const logoPath = [path.join(process.cwd(), "public", "logo.jpg"), path.join(process.cwd(), "client", "public", "logo.jpg"), path.join(process.cwd(), "logo.jpg")].find((p) => fs.existsSync(p));
+    const pageW = 842;
+    const startX = 30;
+    if (logoPath) {
+      const logoHeight = 55;
+      const logoWidth = logoHeight * (3 / 2);
+      const logoX = (pageW - logoWidth) / 2;
+      doc.image(logoPath, logoX, 20, { height: logoHeight });
+    }
+    doc.fontSize(14).font("Helvetica-Bold").fillColor("#1a1a2e").text("Checklist de salida de equipo", startX, 20, { width: pageW - startX * 2, align: "center" });
+    doc.fontSize(9).font("Helvetica").fillColor("#333333").text(`Evento: ${eventName}`, startX, 78, { width: pageW - startX * 2 });
+    if (dateRange) doc.text(`Rango de fechas: ${dateRange}`, startX, 92, { width: pageW - startX * 2 });
+    doc.text(`Generado: ${new Date().toLocaleDateString("es-MX", { year: "numeric", month: "long", day: "numeric" })}`, startX, dateRange ? 106 : 92, { width: pageW - startX * 2 });
+    doc.moveTo(startX, 122).lineTo(pageW - startX, 122).strokeColor("#cccccc").lineWidth(0.5).stroke();
+    doc.fillColor("#000000").lineWidth(1);
+
+    let y = 130;
+    const totalWidth = colWidths.reduce((a, b) => a + b, 0);
+    const xForCol = (i: number) => startX + colWidths.slice(0, i).reduce((a, b) => a + b, 0);
+    const drawHeader = () => {
+      doc.fontSize(7).font("Helvetica-Bold");
+      headers.forEach((h, i) => doc.text(h, xForCol(i), y + 3, { width: colWidths[i] }));
+      doc.moveTo(startX, y + 15).lineTo(startX + totalWidth, y + 15).stroke();
+      y += 15;
+      doc.font("Helvetica");
+    };
+    drawHeader();
+
+    for (let idx = 0; idx < items.length; idx++) {
+      if (y > 520) {
+        doc.addPage({ layout: "landscape", margin: 30 });
+        y = 30;
+        drawHeader();
+      }
+      const item = items[idx] as Record<string, unknown>;
+      const row = headers.map((h) => {
+        if (INVENTORY_EXPORT_PDF_BLANK_COLS_CHECKLIST.has(h)) return "";
+        const key = keyMap[h];
+        const raw = key === "_rowIndex" ? idx + 1 : item[key];
+        return String(raw ?? "").slice(0, maxLen[h] ?? 40);
+      });
+      let rowHeight = 16;
+      row.forEach((cell, i) => {
+        if (!INVENTORY_EXPORT_PDF_BLANK_COLS_CHECKLIST.has(headers[i])) {
+          rowHeight = Math.max(rowHeight, doc.heightOfString(cell, { width: colWidths[i] }) + 6);
+        }
+      });
+      row.forEach((cell, i) => {
+        doc.text(cell, xForCol(i), y + 4, { width: colWidths[i], height: rowHeight });
+      });
+      doc.moveTo(startX, y + rowHeight).lineTo(startX + totalWidth, y + rowHeight).stroke();
+      y += rowHeight;
+    }
+
+    const footerStartY = Math.max(y + 20, 540);
+    doc.fontSize(10).font("Helvetica").text("Autorizado por: _______________________     Fecha: ___________", startX, footerStartY);
+    doc.text("Recibió: _____________________________     Fecha: ___________", startX, footerStartY + 28);
     doc.end();
   });
 
@@ -361,24 +472,41 @@ export function registerInventoryExportRoutes(app: Express): void {
           modifiedAfter,
           ctx.restrictToSiteIds,
         );
+    const [companies, sites] = await Promise.all([storage.getCompanies(), storage.getSites()]);
+    const companyNameMap = new Map(companies.map((c) => [c.id, c.name]));
+    const siteNameMap = new Map(sites.map((s) => [s.id, s.name]));
     const headers = INVENTORY_EXPORT_PDF_HEADERS_ADMIN as unknown as string[];
     const keyMap = INVENTORY_EXPORT_PDF_KEY_MAP_ADMIN;
     const maxLen = INVENTORY_EXPORT_PDF_MAX_LEN_ADMIN;
-    const getVal = (item: Record<string, unknown>, h: string) =>
-      String(item[keyMap[h]] ?? "").slice(0, maxLen[h] ?? 35);
+    const getVal = (item: Record<string, unknown>, h: string) => {
+      const key = keyMap[h];
+      const raw = item[key];
+      if (key === "companyId" && typeof raw === "number") return (companyNameMap.get(raw) ?? String(raw)).slice(0, maxLen[h] ?? 35);
+      if (key === "siteId" && typeof raw === "number") return (siteNameMap.get(raw) ?? String(raw)).slice(0, maxLen[h] ?? 35);
+      return String(raw ?? "").slice(0, maxLen[h] ?? 35);
+    };
     const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 30 });
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", 'attachment; filename="inventory-export-admin.pdf"');
     doc.pipe(res);
     const logoPath = [path.join(process.cwd(), "public", "logo.jpg"), path.join(process.cwd(), "client", "public", "logo.jpg"), path.join(process.cwd(), "logo.jpg")].find((p) => fs.existsSync(p));
+    const pageW = 842;
+    const startX = 30;
     if (logoPath) {
-      const logoWidth = 140;
-      const logoX = (842 - logoWidth) / 2;
-      doc.image(logoPath, logoX, 25, { width: logoWidth });
-      doc.y = 25 + 60 + 15;
+      const logoHeight = 55;
+      const logoWidth = logoHeight * (3 / 2);
+      const logoX = (pageW - logoWidth) / 2;
+      doc.image(logoPath, logoX, 20, { height: logoHeight });
+      doc.fontSize(14).font("Helvetica-Bold").fillColor("#1a1a2e")
+        .text("Reporte de Inventario", startX, 20, { width: pageW - startX * 2, align: "center" });
+      const dateStr = new Date().toLocaleDateString("es-MX", { year: "numeric", month: "long", day: "numeric" });
+      doc.fontSize(8).font("Helvetica").fillColor("#555555")
+        .text(dateStr, startX, 42, { width: pageW - startX * 2, align: "center" });
+      doc.moveTo(startX, 82).lineTo(pageW - startX, 82).strokeColor("#cccccc").lineWidth(0.5).stroke();
+      doc.fillColor("#000000").lineWidth(1);
+      doc.y = 90;
     }
     const colWidths = INVENTORY_EXPORT_PDF_COL_WIDTHS_ADMIN as unknown as number[];
-    const startX = 30;
     let y = doc.y;
     doc.fontSize(7).font("Helvetica-Bold");
     headers.forEach((h, i) => {

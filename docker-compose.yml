@@ -37,6 +37,21 @@ services:
       postgres:
         condition: service_healthy
 
+  mcp:
+    build: .
+    command: ["node", "dist/mcp.cjs"]
+    ports:
+      - "0.0.0.0:5001:5001"
+    environment:
+      NODE_ENV: production
+      MCP_PORT: 5001
+      DATABASE_URL: postgresql://inventario:inventario@postgres:5432/inventario
+      MCP_AUTH_TOKEN: "${MCP_AUTH_TOKEN:-please-set-mcp-auth-token}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:
   uploads_data:

@@ -10,7 +10,45 @@ Track open work and completed items by version. See `CHANGELOG.md` for full rele
 
 ## Open
 
-*(None.)*
+
+### [MCP] Complete pending MCP tools (assign/return + document exports)
+
+- **What:** Finish MCP tools currently stubbed as `not_implemented`: `assign_item`, `return_item`, `generate_responsiva`, `export_inventory_pdf`, `export_checklist_pdf`.
+- **Why:** MCP server compiles and runs, but key operational workflows still unavailable to agents.
+- **Context:** Initial MCP baseline is implemented under `server/mcp/*` with bearer token auth and Compose service on port 5001. Remaining tools were intentionally deferred to avoid unsafe or fake behavior without parity to existing route/service transaction logic.
+- **Solution:**
+: 1) Implement `assign_item` / `return_item` with transaction and history parity to `server/routes/inventory-item-routes.ts`.
+: 2) Extract reusable PDF generation service(s) from `server/routes/inventory-export-routes.ts` and reuse from MCP document tools.
+: 3) Implement `generate_responsiva` using `generateResponsivaDocx` with item + attachment resolution and template-path/env handling consistent with existing app behavior.
+: 4) Replace placeholder note author mapping with explicit MCP actor strategy for audit integrity.
+- **Done When:** All five MCP tools return real results (no `not_implemented`), compile in `npm run build`, and pass targeted tool-level tests.
+- **Effort:** M
+- **Priority:** P2
+- **Depends on:** MCP baseline already merged (`server/mcp/*`, build entrypoint, compose service).
+
+### [Feature] QR checkout/checkin flow — physical item tracking
+
+- **What:** Scan QR code on item to check out (assign) or check in (return), without opening full item form. Mobile-friendly scan → confirm → done.
+- **Why:** Current system depends entirely on manual input. If someone moves item without telling admin, data drifts silently. Closes gap between physical reality and DB state.
+- **Context:** QR codes already generated per item (`qrcode` dep, existing route). Assignment workflow (`POST /api/inventory/:id/assign`, `POST /api/inventory/:id/return`) already exists. Need lightweight scan-to-action UI surface, not full rebuild.
+- **Solution:** Mobile-optimized scan page (camera → decode QR → show item + action buttons: Assign / Return / View). Dedicated `/scan` route in Wouter. Reuse existing assignment endpoints. Consider `?action=assign&employee=X` URL param so QR encodes intent for bulk workflows.
+- **Done When:** Scanning item QR on mobile triggers assign or return in ≤3 taps; DB + history updated; no manual search required.
+- **Effort:** M
+- **Priority:** P2
+- **Depends on:** Existing assignment workflow + QR generation (both done).
+
+---
+
+### [Feature] Merge attendance script into app — daily employee attendance log
+
+- **What:** Integrate standalone Windows attendance script into app as proper feature. Employees log daily attendance; data stored in DB and visible in dashboard.
+- **Why:** Script already exists and reduced 1+ hour manual task to <1 min. App already holds real employee data (`responsible` field, employee documents). Merging eliminates fragile external script dependency and centralizes operational data.
+- **Context:** Current script is standalone (`tsx`). App has employee + assignment context already. Attendance records need: `responsible` name (or future employee FK), `date`, `status` (present/absent/late), `notes`. History/audit pattern already established.
+- **Solution:** New table `attendance_records` (additive SQL migration + runner in `script/migrate-attendance.ts`). `POST /api/attendance` (editor/admin), `GET /api/attendance` with date filter (auth). Simple daily log UI — table or calendar view. Export to XLSX/CSV for HR. Admin can bulk-import from existing script output for historical data.
+- **Done When:** Attendance loggable from app UI; data persisted in DB; exportable; script deprecated.
+- **Effort:** M
+- **Priority:** P3
+- **Depends on:** None. Employee/responsible data already in app.
 
 ---
 

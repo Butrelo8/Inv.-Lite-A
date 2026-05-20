@@ -54,6 +54,7 @@ import { ReturnDialog } from "@/components/ReturnDialog";
 import { MaintenanceScheduleDialog } from "@/components/MaintenanceScheduleDialog";
 import { LoadingOverlay } from "@/components/LoadingOverlay";
 import InventoryAnalytics from "@/components/InventoryAnalytics";
+import { ChecklistExportDialog } from "@/components/ChecklistExportDialog";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useToast } from "@/hooks/use-toast";
@@ -214,6 +215,7 @@ export default function Dashboard() {
   const [bulkUpdating, setBulkUpdating] = useState(false);
   const [lastBulkUndo, setLastBulkUndo] = useState<{ token: string; expiresAt: string; deleted: number } | null>(null);
   const [showAnalytics, setShowAnalytics] = useState(loadAnalyticsOpen);
+  const [isChecklistOpen, setIsChecklistOpen] = useState(false);
 
   const { user } = useAuth();
   const siteScopingEnabled = Boolean(user?.siteScopingEnabled);
@@ -494,6 +496,8 @@ export default function Dashboard() {
   const exportSelectedCsvUrl = idsQueryString ? `${exportCsvEndpoint}?${idsQueryString}` : "";
   const exportSelectedXlsxUrl = idsQueryString ? `${exportXlsxEndpoint}?${idsQueryString}` : "";
   const exportSelectedPdfUrl = idsQueryString ? `${exportPdfEndpoint}?${idsQueryString}` : "";
+  const checklistQueryString = hasSelection ? idsQueryString : exportQueryString;
+  const checklistBaseUrl = `/api/inventory/export/checklist${checklistQueryString ? `?${checklistQueryString}` : ""}`;
   const { data: viewerAttachments = [] } = useAttachments(viewingItem?.id);
   const { data: viewerDocuments = [] } = useItemDocuments(viewingItem?.id, !!viewingItem);
   const { data: editingDocuments = [] } = useItemDocuments(editingItem?.id, !!editingItem);
@@ -1030,6 +1034,10 @@ export default function Dashboard() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <Button variant="outline" size="sm" type="button" onClick={() => setIsChecklistOpen(true)}>
+            <FileDown className="w-4 h-4 mr-2" />
+            Checklist
+          </Button>
           {canEdit && (
           <>
           <input
@@ -1053,6 +1061,7 @@ export default function Dashboard() {
           </>
           )}
       </div>
+      <ChecklistExportDialog open={isChecklistOpen} onOpenChange={setIsChecklistOpen} baseUrl={checklistBaseUrl} />
 
       {/* Filters & Controls */}
       <div className="space-y-4">

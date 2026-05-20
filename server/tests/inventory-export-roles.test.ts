@@ -6,6 +6,7 @@ import {
   INVENTORY_EXPORT_HEADERS_ADMIN,
   INVENTORY_EXPORT_PDF_HEADERS_VIEWER,
   INVENTORY_EXPORT_PDF_HEADERS_ADMIN,
+  INVENTORY_EXPORT_PDF_HEADERS_CHECKLIST,
 } from "../inventory-export-config";
 
 test("inventory export: viewer headers exclude internal notes", async () => {
@@ -22,3 +23,8 @@ test("inventory export: admin headers include internal notes", async () => {
   assert.ok(adminPdf.includes("Notes"), "admin PDF must include Notes");
 });
 
+test("inventory export: checklist headers include signing columns", async () => {
+  const checklistPdf = INVENTORY_EXPORT_PDF_HEADERS_CHECKLIST as readonly string[];
+  assert.ok(checklistPdf.includes("Firma"), "checklist PDF must include Firma");
+  assert.ok(checklistPdf.includes("Cond. Regreso"), "checklist PDF must include Cond. Regreso");
+});
